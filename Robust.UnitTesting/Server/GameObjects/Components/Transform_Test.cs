@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection;
 using Moq;
 using NUnit.Framework;
+using Robust.Server.Containers;
 using Robust.Server.GameObjects;
 using Robust.Server.Physics;
 using Robust.Shared.GameObjects;
@@ -18,7 +19,7 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
 {
     [TestFixture]
     [TestOf(typeof(TransformComponent))]
-    class Transform_Test : RobustUnitTest
+    sealed class Transform_Test : RobustUnitTest
     {
         public override UnitTestProject Project => UnitTestProject.Server;
 
@@ -39,6 +40,8 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
   - type: Transform
   - type: Map
     index: 123
+  # Due to the map getting initialised last this seemed easiest to fix the test while removing the mocks.
+  - type: EntityLookup
 ";
 
         private MapId MapA;
@@ -47,18 +50,6 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
         private IMapGrid GridB = default!;
 
         private static readonly EntityCoordinates InitialPos = new(new EntityUid(1), (0, 0));
-
-        protected override void OverrideIoC()
-        {
-            base.OverrideIoC();
-            var mock = new Mock<IEntitySystemManager>();
-            var broady = new BroadPhaseSystem();
-            var physics = new PhysicsSystem();
-            mock.Setup(m => m.GetEntitySystem<SharedBroadphaseSystem>()).Returns(broady);
-            mock.Setup(m => m.GetEntitySystem<SharedPhysicsSystem>()).Returns(physics);
-
-            IoCManager.RegisterInstance<IEntitySystemManager>(mock.Object, true);
-        }
 
         [OneTimeSetUp]
         public void Setup()
@@ -73,7 +64,7 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var manager = IoCManager.Resolve<IPrototypeManager>();
             manager.RegisterType(typeof(EntityPrototype));
             manager.LoadFromStream(new StringReader(PROTOTYPES));
-            manager.Resync();
+            manager.ResolveResults();
 
             // build the net dream
             MapA = MapManager.CreateMap();
@@ -99,8 +90,8 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var parent = EntityManager.SpawnEntity("dummy", InitialPos);
             var child = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var parentTrans = parent.Transform;
-            var childTrans = child.Transform;
+            var parentTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(parent);
+            var childTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(child);
 
             // that are not on the same map
             parentTrans.Coordinates = new EntityCoordinates(GridA.GridEntityId, (5, 5));
@@ -114,7 +105,7 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             {
                 Assert.That(childTrans.MapID, Is.EqualTo(parentTrans.MapID));
                 Assert.That(childTrans.GridID, Is.EqualTo(parentTrans.GridID));
-                Assert.That(childTrans.Coordinates, Is.EqualTo(new EntityCoordinates(parentTrans.Owner.Uid, (-1, -1))));
+                Assert.That(childTrans.Coordinates, Is.EqualTo(new EntityCoordinates(parentTrans.Owner, (-1, -1))));
                 Assert.That(childTrans.WorldPosition, Is.EqualTo(new Vector2(4, 4)));
             });
 
@@ -148,8 +139,8 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             // Arrange
             var parent = EntityManager.SpawnEntity("dummy", InitialPos);
             var child = EntityManager.SpawnEntity("dummy", InitialPos);
-            var parentTrans = parent.Transform;
-            var childTrans = child.Transform;
+            var parentTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(parent);
+            var childTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(child);
             parentTrans.WorldPosition = new Vector2(5, 5);
             childTrans.WorldPosition = new Vector2(6, 6);
 
@@ -172,9 +163,9 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var parent = EntityManager.SpawnEntity("dummy", InitialPos);
             var childOne = EntityManager.SpawnEntity("dummy", InitialPos);
             var childTwo = EntityManager.SpawnEntity("dummy", InitialPos);
-            var parentTrans = parent.Transform;
-            var childOneTrans = childOne.Transform;
-            var childTwoTrans = childTwo.Transform;
+            var parentTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(parent);
+            var childOneTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(childOne);
+            var childTwoTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(childTwo);
             parentTrans.WorldPosition = new Vector2(1, 1);
             childOneTrans.WorldPosition = new Vector2(2, 2);
             childTwoTrans.WorldPosition = new Vector2(3, 3);
@@ -205,8 +196,8 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             // Arrange
             var parent = EntityManager.SpawnEntity("dummy", InitialPos);
             var child = EntityManager.SpawnEntity("dummy", InitialPos);
-            var parentTrans = parent.Transform;
-            var childTrans = child.Transform;
+            var parentTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(parent);
+            var childTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(child);
             parentTrans.WorldPosition = new Vector2(0, 0);
             childTrans.WorldPosition = new Vector2(2, 0);
             childTrans.AttachParent(parentTrans);
@@ -232,8 +223,8 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             // Arrange
             var parent = EntityManager.SpawnEntity("dummy", InitialPos);
             var child = EntityManager.SpawnEntity("dummy", InitialPos);
-            var parentTrans = parent.Transform;
-            var childTrans = child.Transform;
+            var parentTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(parent);
+            var childTrans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(child);
             parentTrans.WorldPosition = new Vector2(1, 1);
             childTrans.WorldPosition = new Vector2(2, 1);
             childTrans.AttachParent(parentTrans);
@@ -262,10 +253,10 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node4 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
-            var node4Trans = node4.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
+            var node4Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node4);
 
             node1Trans.WorldPosition = new Vector2(0, 0);
             node2Trans.WorldPosition = new Vector2(1, 1);
@@ -300,9 +291,9 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node2 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
 
             node1Trans.WorldPosition = new Vector2(0, 0);
             node2Trans.WorldPosition = new Vector2(1, 1);
@@ -345,9 +336,9 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node2 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
 
             node1Trans.WorldPosition = new Vector2(0, 0);
             node2Trans.WorldPosition = new Vector2(1, 1);
@@ -393,10 +384,10 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node4 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
-            var node4Trans = node4.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
+            var node4Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node4);
 
             node1Trans.WorldPosition = new Vector2(0, 0);
             node2Trans.WorldPosition = new Vector2(1, 1);
@@ -440,9 +431,9 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node2 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
 
             node2Trans.AttachParent(node1Trans);
             node3Trans.AttachParent(node2Trans);
@@ -469,9 +460,9 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             var node2 = EntityManager.SpawnEntity("dummy", InitialPos);
             var node3 = EntityManager.SpawnEntity("dummy", InitialPos);
 
-            var node1Trans = node1.Transform;
-            var node2Trans = node2.Transform;
-            var node3Trans = node3.Transform;
+            var node1Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node1);
+            var node2Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node2);
+            var node3Trans = IoCManager.Resolve<IEntityManager>().GetComponent<TransformComponent>(node3);
 
             node2Trans.AttachParent(node1Trans);
             node3Trans.AttachParent(node2Trans);
@@ -483,28 +474,10 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             Assert.That(node3Trans.WorldPosition, new ApproxEqualityConstraint(new Vector2(15, 15)));
         }
 
-        [Test]
-        public void TestMapIdInitOrder()
-        {
-            // Tests that if a child initializes before its parent, MapID still gets initialized correctly.
-
-            // Set private _parent field via reflection here.
-            // This basically simulates the field getting set in ExposeData(), with way less test boilerplate.
-            var field = typeof(TransformComponent).GetField("_parent", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            var parent = EntityManager.CreateEntityUninitialized("mapDummy");
-            var child1 = EntityManager.CreateEntityUninitialized("dummy");
-            var child2 = EntityManager.CreateEntityUninitialized("dummy");
-
-            field.SetValue(child1.Transform, parent.Uid);
-            field.SetValue(child2.Transform, child1.Uid);
-
-            EntityManager.FinishEntityInitialization(child2);
-            EntityManager.FinishEntityInitialization(child1);
-            EntityManager.FinishEntityInitialization(parent);
-
-            Assert.That(child2.Transform.MapID, Is.EqualTo(new MapId(123)));
-            Assert.That(child1.Transform.MapID, Is.EqualTo(new MapId(123)));
-            Assert.That(parent.Transform.MapID, Is.EqualTo(new MapId(123)));
-        }
+        /*
+         * There used to be a TestMapInitOrder test here. The problem is that the actual game will probably explode if
+         * you start initialising children before parents and the test only worked because of specific setup being done
+         * to prevent this in its use case.
+         */
     }
 }

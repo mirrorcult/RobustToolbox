@@ -1,9 +1,13 @@
 using Robust.Client.GameObjects;
 using Robust.Client.Graphics;
+using Robust.Shared.Containers;
+using Robust.Shared.GameObjects;
 using Robust.Shared.Maths;
+using Robust.Shared.Timing;
 
 namespace Robust.Client.UserInterface.Controls
 {
+    [Virtual]
     public class SpriteView : Control
     {
         private Vector2 _scale = (1, 1);
@@ -48,6 +52,7 @@ namespace Robust.Client.UserInterface.Controls
                 return;
             }
 
+            EntitySystem.Get<SpriteSystem>().ForceUpdate(Sprite);
             renderHandle.DrawEntity(Sprite.Owner, PixelSize / 2, Scale * UIScale, OverrideDirection);
         }
     }

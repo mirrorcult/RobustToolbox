@@ -11,18 +11,26 @@ namespace Robust.Client.GameObjects
     /// Updates the layer animation for every visible sprite.
     /// </summary>
     [UsedImplicitly]
-    public class SpriteSystem : EntitySystem
+    public sealed partial class SpriteSystem : EntitySystem
     {
         [Dependency] private readonly IEyeManager _eyeManager = default!;
         [Dependency] private readonly RenderingTreeSystem _treeSystem = default!;
 
         private readonly Queue<SpriteComponent> _inertUpdateQueue = new();
+        private HashSet<ISpriteComponent> _manualUpdate = new();
 
         public override void Initialize()
         {
             base.Initialize();
 
+            _proto.PrototypesReloaded += OnPrototypesReloaded;
             SubscribeLocalEvent<SpriteUpdateInertEvent>(QueueUpdateInert);
+        }
+
+        public override void Shutdown()
+        {
+            base.Shutdown();
+            _proto.PrototypesReloaded -= OnPrototypesReloaded;
         }
 
         private void QueueUpdateInert(SpriteUpdateInertEvent ev)
@@ -38,6 +46,12 @@ namespace Robust.Client.GameObjects
                 sprite.DoUpdateIsInert();
             }
 
+            foreach (var sprite in _manualUpdate)
+            {
+                if (!sprite.Deleted && !sprite.IsInert)
+                    sprite.FrameUpdate(frameTime);
+            }
+
             var pvsBounds = _eyeManager.GetWorldViewbounds();
 
             var currentMap = _eyeManager.CurrentMap;
@@ -46,9 +60,11 @@ namespace Robust.Client.GameObjects
                 return;
             }
 
+            var xforms = EntityManager.GetEntityQuery<TransformComponent>();
+
             foreach (var comp in _treeSystem.GetRenderTrees(currentMap, pvsBounds))
             {
-                var bounds = comp.Owner.Transform.InvWorldMatrix.TransformBox(pvsBounds);
+                var bounds = xforms.GetComponent(comp.Owner).InvWorldMatrix.TransformBox(pvsBounds);
 
                 comp.SpriteTree.QueryAabb(ref frameTime, (ref float state, in SpriteComponent value) =>
                 {
@@ -57,10 +73,21 @@ namespace Robust.Client.GameObjects
                         return true;
                     }
 
-                    value.FrameUpdate(state);
+                    if (!_manualUpdate.Contains(value))
+                        value.FrameUpdate(state);
                     return true;
                 }, bounds, true);
             }
+
+            _manualUpdate.Clear();
+        }
+
+        /// <summary>
+        ///     Force update of the sprite component next frame
+        /// </summary>
+        public void ForceUpdate(ISpriteComponent sprite)
+        {
+            _manualUpdate.Add(sprite);
         }
     }
 }

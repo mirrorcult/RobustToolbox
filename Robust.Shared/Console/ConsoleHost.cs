@@ -7,6 +7,7 @@ using Robust.Shared.Log;
 using Robust.Shared.Network;
 using Robust.Shared.Players;
 using Robust.Shared.Reflection;
+using Robust.Shared.Timing;
 using Robust.Shared.ViewVariables;
 
 namespace Robust.Shared.Console
@@ -17,11 +18,15 @@ namespace Robust.Shared.Console
         protected const string SawmillName = "con";
 
         [Dependency] protected readonly ILogManager LogManager = default!;
-        [Dependency] protected readonly IReflectionManager ReflectionManager = default!;
+        [Dependency] private readonly IReflectionManager ReflectionManager = default!;
         [Dependency] protected readonly INetManager NetManager = default!;
+        [Dependency] private readonly IDynamicTypeFactoryInternal _typeFactory = default!;
+        [Dependency] private readonly IGameTiming _timing = default!;
 
         [ViewVariables]
         protected readonly Dictionary<string, IConsoleCommand> AvailableCommands = new();
+
+        private readonly CommandBuffer _commandBuffer = new CommandBuffer();
 
         /// <inheritdoc />
         public bool IsServer => NetManager.IsServer;
@@ -48,7 +53,7 @@ namespace Robust.Shared.Console
             // search for all client commands in all assemblies, and register them
             foreach (var type in ReflectionManager.GetAllChildren<IConsoleCommand>())
             {
-                var instance = (IConsoleCommand) Activator.CreateInstance(type, null)!;
+                var instance = (IConsoleCommand) _typeFactory.CreateInstanceUnchecked(type, true);
                 if (RegisteredCommands.TryGetValue(instance.Command, out var duplicate))
                 {
                     throw new InvalidImplementationException(instance.GetType(), typeof(IConsoleCommand),
@@ -67,6 +72,18 @@ namespace Robust.Shared.Console
 
             var newCmd = new RegisteredCommand(command, description, help, callback);
             AvailableCommands.Add(command, newCmd);
+        }
+
+        /// <inheritdoc />
+        public void UnregisterCommand(string command)
+        {
+            if (!AvailableCommands.TryGetValue(command, out var cmd))
+                throw new KeyNotFoundException($"Command {command} is not registered.");
+
+            if (cmd is not RegisteredCommand)
+                throw new InvalidOperationException("You cannot unregister commands that have been registered automatically.");
+
+            AvailableCommands.Remove(command);
         }
 
         //TODO: Pull up
@@ -103,13 +120,43 @@ namespace Robust.Shared.Console
             ExecuteCommand(null, command);
         }
 
+        /// <inheritdoc />
+        public void AppendCommand(string command)
+        {
+            _commandBuffer.Append(command);
+        }
+
+        /// <inheritdoc />
+        public void InsertCommand(string command)
+        {
+            _commandBuffer.Insert(command);
+        }
+
+        /// <inheritdoc />
+        public void CommandBufferExecute()
+        {
+            _commandBuffer.Tick(_timing.TickRate);
+
+            while (_commandBuffer.TryGetCommand(out var cmd))
+            {
+                try
+                {
+                    ExecuteCommand(cmd);
+                }
+                catch (Exception e)
+                {
+                    LocalShell.WriteError(e.Message);
+                }
+            }
+        }
+
         /// <summary>
         /// A console command that was registered inline through <see cref="IConsoleHost"/>.
         /// </summary>
         [Reflect(false)]
-        private class RegisteredCommand : IConsoleCommand
+        public sealed class RegisteredCommand : IConsoleCommand
         {
-            private readonly ConCommandCallback _callback;
+            public ConCommandCallback Callback { get; }
 
             /// <inheritdoc />
             public string Command { get; }
@@ -130,15 +177,16 @@ namespace Robust.Shared.Console
             public RegisteredCommand(string command, string description, string help, ConCommandCallback callback)
             {
                 Command = command;
+                // Should these two be localized somehow?
                 Description = description;
                 Help = help;
-                _callback = callback;
+                Callback = callback;
             }
 
             /// <inheritdoc />
             public void Execute(IConsoleShell shell, string argStr, string[] args)
             {
-                _callback(shell, argStr, args);
+                Callback(shell, argStr, args);
             }
         }
     }

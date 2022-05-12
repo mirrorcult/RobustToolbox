@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using JetBrains.Annotations;
 using Robust.Client.Graphics;
 using Robust.Client.Physics;
@@ -7,8 +7,10 @@ using Robust.Shared.GameObjects;
 using Robust.Shared.Input;
 using Robust.Shared.Input.Binding;
 using Robust.Shared.IoC;
+using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
+using Robust.Shared.Timing;
 
 #nullable enable
 
@@ -18,17 +20,8 @@ namespace Robust.Client.GameObjects
     /// Updates the position of every Eye every frame, so that the camera follows the player around.
     /// </summary>
     [UsedImplicitly]
-    internal class EyeUpdateSystem : EntitySystem
+    public sealed class EyeUpdateSystem : EntitySystem
     {
-        // How fast the camera rotates in radians
-        private const float CameraRotateSpeed = MathF.PI;
-
-        [Dependency] private readonly IEyeManager _eyeManager = default!;
-        [Dependency] private readonly IMapManager _mapManager = default!;
-        [Dependency] private readonly IPlayerManager _playerManager = default!;
-
-        private bool _isLerping = false;
-
         /// <inheritdoc />
         public override void Initialize()
         {
@@ -56,48 +49,6 @@ namespace Robust.Client.GameObjects
         /// <inheritdoc />
         public override void FrameUpdate(float frameTime)
         {
-            var currentEye = _eyeManager.CurrentEye;
-
-            // TODO: Content should have its own way of handling this. We should have a default behavior that they can overwrite.
-            /*
-            var inputSystem = EntitySystemManager.GetEntitySystem<InputSystem>();
-
-            var direction = 0;
-            if (inputSystem.CmdStates[EngineKeyFunctions.CameraRotateRight] == BoundKeyState.Down)
-            {
-                direction += 1;
-            }
-
-            if (inputSystem.CmdStates[EngineKeyFunctions.CameraRotateLeft] == BoundKeyState.Down)
-            {
-                direction -= 1;
-            }
-
-            // apply camera rotation
-            if(direction != 0)
-            {
-                currentEye.Rotation += CameraRotateSpeed * frameTime * direction;
-                currentEye.Rotation = currentEye.Rotation.Reduced();
-            }
-            */
-
-            var playerTransform = _playerManager.LocalPlayer?.ControlledEntity?.Transform;
-
-            if (playerTransform == null) return;
-
-            var gridId = playerTransform.GridID;
-
-            var parent = gridId != GridId.Invalid && EntityManager.TryGetEntity(_mapManager.GetGrid(gridId).GridEntityId, out var gridEnt) ?
-                gridEnt.Transform
-                : _mapManager.GetMapEntity(playerTransform.MapID).Transform;
-
-            if (!_isLerping)
-            {
-                // TODO: Detect parent change and start lerping
-                var parentRotation = parent.WorldRotation;
-                currentEye.Rotation = -parentRotation;
-            }
-
             foreach (var eyeComponent in EntityManager.EntityQuery<EyeComponent>(true))
             {
                 eyeComponent.UpdateEyePosition();

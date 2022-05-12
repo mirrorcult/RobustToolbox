@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using NUnit.Framework;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
@@ -16,7 +16,7 @@ namespace Robust.UnitTesting.Shared.Serialization.TypeSerializers
 {
     [TestFixture]
     [TestOf(typeof(ComponentRegistrySerializer))]
-    public class ComponentRegistrySerializerTest : SerializationTest
+    public sealed class ComponentRegistrySerializerTest : SerializationTest
     {
         [OneTimeSetUp]
         public new void OneTimeSetup()
@@ -48,7 +48,7 @@ namespace Robust.UnitTesting.Shared.Serialization.TypeSerializers
 
             var mapping = yamlStream.Documents[0].RootNode.ToDataNodeCast<SequenceDataNode>();
 
-            var deserializedRegistry = Serialization.ReadValueOrThrow<ComponentRegistry>(mapping);
+            var deserializedRegistry = Serialization.Read<ComponentRegistry>(mapping);
 
             Assert.That(deserializedRegistry.Count, Is.EqualTo(1));
             Assert.That(deserializedRegistry.ContainsKey("Test"));
@@ -56,8 +56,7 @@ namespace Robust.UnitTesting.Shared.Serialization.TypeSerializers
         }
     }
 
-    public class TestComponent : Component
+    public sealed class TestComponent : Component
     {
-        public override string Name => "Test";
     }
 }

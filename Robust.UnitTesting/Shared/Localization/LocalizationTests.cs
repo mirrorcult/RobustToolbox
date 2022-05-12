@@ -27,13 +27,13 @@ namespace Robust.UnitTesting.Shared.Localization
 
             var res = IoCManager.Resolve<IResourceManagerInternal>();
             res.MountString("/Locale/en-US/a.ftl", FluentCode);
-            res.MountString("/Prototypes/a.yml", YAMLCode);
+            res.MountString("/EnginePrototypes/a.yml", YAMLCode);
 
             var protoMan = IoCManager.Resolve<IPrototypeManager>();
 
             protoMan.RegisterType(typeof(EntityPrototype));
-            protoMan.LoadDirectory(new ResourcePath("/Prototypes"));
-            protoMan.Resync();
+            protoMan.LoadDirectory(new ResourcePath("/EnginePrototypes"));
+            protoMan.ResolveResults();
 
             var loc = IoCManager.Resolve<ILocalizationManager>();
             var culture = new CultureInfo("en-US", false);
@@ -242,9 +242,9 @@ test-message-custom-attrib = { ATTRIB($entity, ""otherAttrib"") }
             var entMan = IoCManager.Resolve<IEntityManager>();
             var ent = entMan.CreateEntityUninitialized(prototype);
 
-            Assert.That(ent.Name, Is.EqualTo("A"));
-            Assert.That(ent.Description, Is.EqualTo("B"));
-            Assert.That(ent.Prototype!.EditorSuffix, Is.EqualTo("C"));
+            Assert.That(IoCManager.Resolve<IEntityManager>().GetComponent<MetaDataComponent>(ent).EntityName, Is.EqualTo("A"));
+            Assert.That(IoCManager.Resolve<IEntityManager>().GetComponent<MetaDataComponent>(ent).EntityDescription, Is.EqualTo("B"));
+            Assert.That(IoCManager.Resolve<IEntityManager>().GetComponent<MetaDataComponent>(ent).EntityPrototype!.EditorSuffix, Is.EqualTo("C"));
 
             Assert.That(loc.GetString("test-message-gender", ("entity", ent)), Is.EqualTo("male"));
             Assert.That(loc.GetString("test-message-proper", ("entity", ent)), Is.EqualTo("true"));

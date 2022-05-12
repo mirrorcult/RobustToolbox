@@ -10,15 +10,17 @@ using Robust.Shared.ViewVariables;
 namespace Robust.Server.GameObjects
 {
     [ComponentReference(typeof(SharedEyeComponent))]
-    public class EyeComponent : SharedEyeComponent
+    public sealed class EyeComponent : SharedEyeComponent
     {
+        public const int DefaultVisibilityMask = 1;
+
         [DataField("drawFov")]
         private bool _drawFov = true;
         [DataField("zoom")]
         private Vector2 _zoom = Vector2.One;
         private Vector2 _offset;
         private Angle _rotation;
-        private uint _visibilityMask = 1;
+        private uint _visibilityMask = DefaultVisibilityMask;
 
         public override bool DrawFov
         {
@@ -85,7 +87,7 @@ namespace Robust.Server.GameObjects
             }
         }
 
-        public override ComponentState GetComponentState(ICommonSession player)
+        public override ComponentState GetComponentState()
         {
             return new EyeComponentState(DrawFov, Zoom, Offset, Rotation, VisibilityMask);
         }

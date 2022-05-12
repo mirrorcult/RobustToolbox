@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -9,6 +10,9 @@ using Robust.Shared.Maths;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Serialization.Manager.Attributes;
+using Robust.Shared.Serialization.Markdown.Mapping;
+using Robust.Shared.Serialization.Markdown.Sequence;
+using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Implementations.Custom.Prototype;
 using Robust.Shared.ViewVariables;
 
@@ -18,7 +22,7 @@ namespace Robust.Shared.Prototypes
     /// Prototype that represents game entities.
     /// </summary>
     [Prototype("entity", -1)]
-    public class EntityPrototype : IPrototype, IInheritingPrototype, ISerializationHooks
+    public sealed class EntityPrototype : IPrototype, IInheritingPrototype, ISerializationHooks
     {
         private ILocalizationManager _loc = default!;
 
@@ -30,7 +34,6 @@ namespace Robust.Shared.Prototypes
 
         private const int DEFAULT_RANGE = 200;
 
-        [NeverPushInheritance]
         [DataField("loc")]
         private Dictionary<string, string>? _locPropertiesSet;
 
@@ -38,7 +41,7 @@ namespace Robust.Shared.Prototypes
         /// The "in code name" of the object. Must be unique.
         /// </summary>
         [ViewVariables]
-        [DataField("id")]
+        [IdDataFieldAttribute]
         public string ID { get; private set; } = default!;
 
         /// <summary>
@@ -47,17 +50,14 @@ namespace Robust.Shared.Prototypes
         /// </summary>
         /// <seealso cref="Name"/>
         [ViewVariables]
-        [NeverPushInheritance]
         [DataField("name")]
         public string? SetName { get; private set; }
 
         [ViewVariables]
-        [NeverPushInheritance]
         [DataField("description")]
         public string? SetDesc { get; private set; }
 
         [ViewVariables]
-        [NeverPushInheritance]
         [DataField("suffix")]
         public string? SetSuffix { get; private set; }
 
@@ -88,7 +88,6 @@ namespace Robust.Shared.Prototypes
         /// </summary>
         [ViewVariables]
         [DataField("localizationId")]
-        [NeverPushInheritance]
         public string? CustomLocalizationID { get; private set; }
 
 
@@ -97,8 +96,8 @@ namespace Robust.Shared.Prototypes
         /// </summary>
         [ViewVariables]
         [NeverPushInheritance]
-        [DataField("abstract")]
-        public bool Abstract { get; private set; }
+        [DataField("noSpawn")]
+        public bool NoSpawn { get; private set; }
 
         [DataField("placement")] private EntityPlacementProperties PlacementProperties = new();
 
@@ -131,14 +130,19 @@ namespace Robust.Shared.Prototypes
         /// </summary>
         [ViewVariables]
         [DataField("save")]
-        public bool MapSavable { get; protected set; } = true;
+        public bool MapSavable { get; set; } = true;
 
         /// <summary>
         /// The prototype we inherit from.
         /// </summary>
         [ViewVariables]
-        [DataField("parent", customTypeSerializer:typeof(PrototypeIdSerializer<EntityPrototype>))]
+        [ParentDataFieldAttribute(typeof(AbstractPrototypeIdSerializer<EntityPrototype>))]
         public string? Parent { get; private set; }
+
+        [ViewVariables]
+        [NeverPushInheritance]
+        [AbstractDataField]
+        public bool Abstract { get; }
 
         /// <summary>
         /// A dictionary mapping the component type list to the YAML mapping containing their settings.
@@ -174,23 +178,24 @@ namespace Robust.Shared.Prototypes
             return true;
         }
 
-        public void UpdateEntity(Entity entity)
+        public void UpdateEntity(EntityUid entity)
         {
-            if (ID != entity.Prototype?.ID)
+            var entityManager = IoCManager.Resolve<IEntityManager>();
+            var metaData = entityManager.GetComponent<MetaDataComponent>(entity);
+            if (ID != metaData.EntityPrototype?.ID)
             {
                 Logger.Error(
-                    $"Reloaded prototype used to update entity did not match entity's existing prototype: Expected '{ID}', got '{entity.Prototype?.ID}'");
+                    $"Reloaded prototype used to update entity did not match entity's existing prototype: Expected '{ID}', got '{entityManager.GetComponent<MetaDataComponent>(entity).EntityPrototype?.ID}'");
                 return;
             }
 
             var factory = IoCManager.Resolve<IComponentFactory>();
-            var entityManager = IoCManager.Resolve<IEntityManager>();
-            var oldPrototype = entity.Prototype;
+            var oldPrototype = metaData.EntityPrototype;
 
-            var oldPrototypeComponents = oldPrototype.Components.Keys
+            var oldPrototypeComponents = oldPrototype?.Components.Keys
                 .Where(n => n != "Transform" && n != "MetaData")
                 .Select(name => (name, factory.GetRegistration(name).Type))
-                .ToList();
+                .ToList() ?? new List<(string name, Type Type)>();
             var newPrototypeComponents = Components.Keys
                 .Where(n => n != "Transform" && n != "MetaData")
                 .Select(name => (name, factory.GetRegistration(name).Type))
@@ -207,12 +212,11 @@ namespace Robust.Shared.Prototypes
                     continue;
                 }
 
-                entityManager.RemoveComponent(entity.Uid, type);
+                entityManager.RemoveComponent(entity, type);
             }
 
             entityManager.CullRemovedComponents();
 
-            var componentDependencyManager = IoCManager.Resolve<IComponentDependencyManager>();
 
             // Add new components
             foreach (var (name, type) in newPrototypeComponents.Where(t => !ignoredComponents.Contains(t.name))
@@ -221,15 +225,20 @@ namespace Robust.Shared.Prototypes
                 var data = Components[name];
                 var component = (Component) factory.GetComponent(name);
                 component.Owner = entity;
-                componentDependencyManager.OnComponentAdd(entity.Uid, component);
-                entity.AddComponent(component);
+                entityManager.AddComponent(entity, component);
             }
 
             // Update entity metadata
-            entity.MetaData.EntityPrototype = this;
+            metaData.EntityPrototype = this;
         }
 
-        internal static void LoadEntity(EntityPrototype? prototype, Entity entity, IComponentFactory factory,
+        internal static void LoadEntity(
+            EntityPrototype? prototype,
+            EntityUid entity,
+            IComponentFactory factory,
+            IPrototypeManager prototypeManager,
+            IEntityManager entityManager,
+            ISerializationManager serManager,
             IEntityLoadContext? context) //yeah officer this method right here
         {
             /*YamlObjectSerializer.Context? defaultContext = null;
@@ -240,15 +249,29 @@ namespace Robust.Shared.Prototypes
 
             if (prototype != null)
             {
-                foreach (var (name, data) in prototype.Components)
+                prototypeManager.TryGetMapping(typeof(EntityPrototype), prototype.ID, out var prototypeData);
+
+                foreach (var (name, _) in prototype.Components)
                 {
-                    var fullData = data;
-                    if (context != null)
+                    MappingDataNode? fullData = null;
+                    if (prototypeData != null && prototypeData.TryGet<SequenceDataNode>("components", out var compList))
                     {
-                        fullData = context.GetComponentData(name, data);
+                        foreach (var data in compList)
+                        {
+                            if(data is not MappingDataNode mappingDataNode || !mappingDataNode.TryGet<ValueDataNode>("type", out var typeNode) || typeNode.Value != name ) continue;
+                            fullData = mappingDataNode;
+                            break;
+                        }
                     }
 
-                    EnsureCompExistsAndDeserialize(entity, factory, name, fullData, context as ISerializationContext);
+                    fullData ??= new MappingDataNode();
+
+                    if (context != null)
+                    {
+                        fullData = context.GetComponentData(name, fullData);
+                    }
+
+                    EnsureCompExistsAndDeserialize(entity, factory, entityManager, serManager, name, fullData, context as ISerializationContext);
                 }
             }
 
@@ -266,26 +289,30 @@ namespace Robust.Shared.Prototypes
 
                     var ser = context.GetComponentData(name, null);
 
-                    EnsureCompExistsAndDeserialize(entity, factory, name, ser, context as ISerializationContext);
+                    EnsureCompExistsAndDeserialize(entity, factory, entityManager, serManager, name, ser, context as ISerializationContext);
                 }
             }
         }
 
-        private static void EnsureCompExistsAndDeserialize(Entity entity, IComponentFactory factory, string compName,
-            IComponent data, ISerializationContext? context)
+        private static void EnsureCompExistsAndDeserialize(EntityUid entity,
+            IComponentFactory factory,
+            IEntityManager entityManager,
+            ISerializationManager serManager,
+            string compName,
+            MappingDataNode data, ISerializationContext? context)
         {
             var compType = factory.GetRegistration(compName).Type;
 
-            if (!entity.TryGetComponent(compType, out var component))
+            if (!entityManager.TryGetComponent(entity, compType, out var component))
             {
                 var newComponent = (Component) factory.GetComponent(compName);
                 newComponent.Owner = entity;
-                entity.AddComponent(newComponent);
+                entityManager.AddComponent(entity, newComponent);
                 component = newComponent;
             }
 
             // TODO use this value to support struct components
-            _ = IoCManager.Resolve<ISerializationManager>().Copy(data, component, context);
+            serManager.Read(compType, data, context, value: component);
         }
 
         public override string ToString()
@@ -293,7 +320,7 @@ namespace Robust.Shared.Prototypes
             return $"EntityPrototype({ID})";
         }
 
-        public class ComponentRegistry : Dictionary<string, IComponent>
+        public sealed class ComponentRegistry : Dictionary<string, IComponent>
         {
             public ComponentRegistry()
             {
@@ -305,7 +332,7 @@ namespace Robust.Shared.Prototypes
         }
 
         [DataDefinition]
-        public class EntityPlacementProperties
+        public sealed class EntityPlacementProperties
         {
             public bool PlacementOverriden { get; private set; }
             public bool SnapOverriden { get; private set; }

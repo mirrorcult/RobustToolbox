@@ -16,7 +16,7 @@ using static Robust.Client.UserInterface.Controls.BoxContainer;
 
 namespace Robust.Client.UserInterface.CustomControls
 {
-    public sealed class EntitySpawnWindow : SS14Window
+    public sealed class EntitySpawnWindow : DefaultWindow
     {
         private readonly IPlacementManager placementManager;
         private readonly IPrototypeManager prototypeManager;
@@ -28,6 +28,7 @@ namespace Robust.Client.UserInterface.CustomControls
         private OptionButton OverrideMenu;
         private Button ClearButton;
         private Button EraseButton;
+        private Label RotationLabel;
 
         private EntitySpawnButton MeasureButton;
 
@@ -122,6 +123,7 @@ namespace Robust.Client.UserInterface.CustomControls
                             })
                         }
                     },
+                    (RotationLabel = new Label()),
                     new DoNotMeasure
                     {
                         Visible = false,
@@ -149,6 +151,11 @@ namespace Robust.Client.UserInterface.CustomControls
             BuildEntityList();
 
             this.placementManager.PlacementChanged += OnPlacementCanceled;
+            this.placementManager.DirectionChanged += OnDirectionChanged;
+            UpdateDirectionLabel();
+
+            OnClose += OnWindowClosed;
+
             SearchBar.GrabKeyboardFocus();
         }
 
@@ -158,14 +165,16 @@ namespace Robust.Client.UserInterface.CustomControls
 
             if (!disposing) return;
 
-            if(EraseButton.Pressed)
+            if (EraseButton.Pressed)
                 placementManager.Clear();
 
             placementManager.PlacementChanged -= OnPlacementCanceled;
+            placementManager.DirectionChanged -= OnDirectionChanged;
         }
 
         private void OnSearchBarTextChanged(LineEdit.LineEditEventArgs args)
         {
+            placementManager.Clear();
             BuildEntityList(args.Text);
             ClearButton.Disabled = string.IsNullOrEmpty(args.Text);
         }
@@ -191,13 +200,19 @@ namespace Robust.Client.UserInterface.CustomControls
 
         private void OnClearButtonPressed(BaseButton.ButtonEventArgs args)
         {
+            placementManager.Clear();
             SearchBar.Clear();
             BuildEntityList("");
         }
 
         private void OnEraseButtonToggled(BaseButton.ButtonToggledEventArgs args)
         {
-            placementManager.ToggleEraser();
+            placementManager.Clear();
+            // Only toggle the eraser back if the button is pressed.
+            if(args.Pressed)
+                placementManager.ToggleEraser();
+            // clearing will toggle the erase button off...
+            args.Button.Pressed = args.Pressed;
             OverrideMenu.Disabled = args.Pressed;
         }
 
@@ -213,7 +228,7 @@ namespace Robust.Client.UserInterface.CustomControls
 
             foreach (var prototype in prototypeManager.EnumeratePrototypes<EntityPrototype>())
             {
-                if (prototype.Abstract)
+                if (prototype.NoSpawn || prototype.Abstract)
                 {
                     continue;
                 }
@@ -391,7 +406,7 @@ namespace Robust.Client.UserInterface.CustomControls
             UpdateVisiblePrototypes();
         }
 
-        private class PrototypeListContainer : Container
+        private sealed class PrototypeListContainer : Container
         {
             // Quick and dirty container to do virtualization of the list.
             // Basically, get total item count and offset to put the current buttons at.
@@ -459,7 +474,7 @@ namespace Robust.Client.UserInterface.CustomControls
         }
 
         [DebuggerDisplay("spawnbutton {" + nameof(Index) + "}")]
-        private class EntitySpawnButton : Control
+        private sealed class EntitySpawnButton : Control
         {
             public string PrototypeID => Prototype.ID;
             public EntityPrototype Prototype { get; set; } = default!;
@@ -500,6 +515,16 @@ namespace Robust.Client.UserInterface.CustomControls
             }
         }
 
+        private void OnWindowClosed()
+        {
+            if (SelectedButton != null)
+            {
+                SelectedButton.ActualButton.Pressed = false;
+                SelectedButton = null;
+            }
+            placementManager.Clear();
+        }
+
         private void OnPlacementCanceled(object? sender, EventArgs e)
         {
             if (SelectedButton != null)
@@ -512,7 +537,17 @@ namespace Robust.Client.UserInterface.CustomControls
             OverrideMenu.Disabled = false;
         }
 
-        private class DoNotMeasure : Control
+        private void OnDirectionChanged(object? sender, EventArgs e)
+        {
+            UpdateDirectionLabel();
+        }
+
+        private void UpdateDirectionLabel()
+        {
+            RotationLabel.Text = placementManager.Direction.ToString();
+        }
+
+        private sealed class DoNotMeasure : Control
         {
             protected override Vector2 MeasureOverride(Vector2 availableSize)
             {

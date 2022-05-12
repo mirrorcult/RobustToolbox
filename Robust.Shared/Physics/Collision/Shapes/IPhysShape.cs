@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Robust.Shared.Maths;
 
 namespace Robust.Shared.Physics.Collision.Shapes
@@ -10,8 +10,7 @@ namespace Robust.Shared.Physics.Collision.Shapes
         Edge = 1,
         Polygon = 2,
         Chain = 3,
-        Aabb = 4,
-        TypeCount = 5, // Obviously increment this if you add something
+        TypeCount = 4, // Obviously increment this if you add something
     }
 
     /// <summary>
@@ -36,10 +35,13 @@ namespace Robust.Shared.Physics.Collision.Shapes
         ShapeType ShapeType { get; }
 
         /// <summary>
+        /// Local Axis Aligned Bounding Box (AABB) of the shape.
+        /// </summary>
+        Box2 LocalBounds { get; }
+
+        /// <summary>
         /// Calculate the AABB of the shape.
         /// </summary>
         Box2 ComputeAABB(Transform transform, int childIndex);
-
-        void ApplyState();
     }
 }

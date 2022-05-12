@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using JetBrains.Annotations;
 using Robust.Shared.Configuration;
@@ -17,7 +17,7 @@ namespace Robust.Shared.Physics.Collision.Shapes
     /// </summary>
     [Serializable, NetSerializable]
     [DataDefinition]
-    public class PhysShapeAabb : IPhysShape
+    public sealed class PhysShapeAabb : IPhysShape
     {
         public int ChildCount => 1;
 
@@ -32,7 +32,6 @@ namespace Robust.Shared.Physics.Collision.Shapes
             {
                 if (MathHelper.CloseToPercent(_radius, value)) return;
                 _radius = value;
-                OnDataChanged?.Invoke();
             }
         }
 
@@ -40,27 +39,14 @@ namespace Robust.Shared.Physics.Collision.Shapes
 
         internal Vector2 Centroid { get; set; } = Vector2.Zero;
 
-        public ShapeType ShapeType => ShapeType.Aabb;
+        public ShapeType ShapeType => ShapeType.Unknown;
 
         [DataField("bounds")]
+        [ViewVariables(VVAccess.ReadWrite)]
         private Box2 _localBounds = Box2.UnitCentered;
 
-        /// <summary>
-        /// Local AABB bounds of this shape.
-        /// </summary>
-        [ViewVariables(VVAccess.ReadWrite)]
-        public Box2 LocalBounds
-        {
-            get => _localBounds;
-            set
-            {
-                if (_localBounds == value)
-                    return;
-
-                _localBounds = value;
-                OnDataChanged?.Invoke();
-            }
-        }
+        /// <inheritdoc />
+        public Box2 LocalBounds => _localBounds;
 
         public PhysShapeAabb(float radius)
         {
@@ -76,13 +62,6 @@ namespace Robust.Shared.Physics.Collision.Shapes
         {
             return new Box2Rotated(_localBounds.Translated(transform.Position), transform.Quaternion2D.Angle, transform.Position).CalcBoundingBox().Enlarged(_radius);
         }
-
-        /// <inheritdoc />
-        public void ApplyState() { }
-
-        // TODO
-        [field: NonSerialized]
-        public event Action? OnDataChanged;
 
         [Pure]
         internal List<Vector2> GetVertices()

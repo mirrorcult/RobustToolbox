@@ -1,4 +1,4 @@
-﻿using Robust.Shared.Maths;
+using Robust.Shared.Maths;
 using System;
 using System.Collections.Generic;
 
@@ -7,6 +7,7 @@ namespace Robust.Client.UserInterface.Controls
     /// <summary>
     ///     Number input LineEdit with increment buttons.
     /// </summary>
+    [Virtual]
     public class SpinBox : BoxContainer
     {
         public const string LeftButtonStyle = "spinbox-left";
@@ -22,15 +23,17 @@ namespace Robust.Client.UserInterface.Controls
         /// </summary>
         public Func<int, bool>? IsValid { get; set; }
 
+        private int _value;
         public int Value
         {
-            get => int.TryParse(_lineEdit.Text, out int i) ? i : 0;
+            get => _value;
             set
             {
                 if (IsValid != null && !IsValid(value))
                 {
                     return;
                 }
+                _value = value;
                 _lineEdit.Text = value.ToString();
                 ValueChanged?.Invoke(this, new ValueChangedEventArgs(value));
             }
@@ -67,6 +70,11 @@ namespace Robust.Client.UserInterface.Controls
             Value = 0;
 
             _lineEdit.IsValid = (str) => int.TryParse(str, out var i) && (IsValid == null || IsValid(i));
+            _lineEdit.OnTextChanged += (args) =>
+            {
+                if (int.TryParse(args.Text, out int i))
+                    Value = i;
+            };
         }
 
         /// <summary>
@@ -187,7 +195,7 @@ namespace Robust.Client.UserInterface.Controls
         }
     }
 
-    public class ValueChangedEventArgs : EventArgs
+    public sealed class ValueChangedEventArgs : EventArgs
     {
         public readonly int Value;
 

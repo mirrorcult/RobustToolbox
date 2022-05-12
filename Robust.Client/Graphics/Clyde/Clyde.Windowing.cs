@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenToolkit.Graphics.OpenGL4;
 using Robust.Client.Input;
 using Robust.Client.UserInterface;
 using Robust.Shared;
@@ -13,8 +12,9 @@ using Robust.Shared.Maths;
 using Robust.Shared.Utility;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
-using static Robust.Client.Utility.Win32;
+using TerraFX.Interop.Windows;
 using FrameEventArgs = Robust.Shared.Timing.FrameEventArgs;
+using GL = OpenToolkit.Graphics.OpenGL4.GL;
 
 namespace Robust.Client.Graphics.Clyde
 {
@@ -204,10 +204,14 @@ namespace Robust.Client.Graphics.Clyde
                                         "or enable compatibility mode in the launcher if that fails.\n" +
                                         $"The exact error is: {lastError}";
 
-                    MessageBoxW(null,
-                        msgBoxContent,
-                        "Space Station 14: Failed to create window",
-                        MB_OK | MB_ICONERROR);
+                    fixed (char* pText = msgBoxContent)
+                    fixed (char* pCaption = "RobustToolbox: Failed to create window")
+                    {
+                        Windows.MessageBoxW(HWND.NULL,
+                            (ushort*) pText,
+                            (ushort*) pCaption,
+                            MB.MB_OK | MB.MB_ICONERROR);
+                    }
                 }
 
                 Logger.FatalS("clyde.win",
@@ -218,7 +222,8 @@ namespace Robust.Client.Graphics.Clyde
                 return false;
             }
 
-            InitOpenGL();
+            if (!_earlyGLInit)
+                InitOpenGL();
 
             _sawmillOgl.Debug("Setting viewport and rendering splash...");
 
@@ -432,6 +437,13 @@ namespace Robust.Client.Graphics.Clyde
             _windowing!.WindowSetVisible(reg, visible);
         }
 
+        public void RunOnWindowThread(Action a)
+        {
+            DebugTools.AssertNotNull(_windowing);
+
+            _windowing!.RunOnWindowThread(a);
+        }
+
         private abstract class WindowReg
         {
             public bool IsDisposed;
@@ -458,6 +470,7 @@ namespace Robust.Client.Graphics.Clyde
             public RenderWindow RenderTarget = default!;
             public Action<WindowRequestClosedEventArgs>? RequestClosed;
             public Action<WindowDestroyedEventArgs>? Closed;
+            public Action<WindowResizedEventArgs>? Resized;
         }
 
         private sealed class WindowHandle : IClydeWindowInternal
@@ -521,6 +534,12 @@ namespace Robust.Client.Graphics.Clyde
             {
                 add => Reg.Closed += value;
                 remove => Reg.Closed -= value;
+            }
+
+            public event Action<WindowResizedEventArgs>? Resized
+            {
+                add => Reg.Resized += value;
+                remove => Reg.Resized -= value;
             }
 
             public nint? WindowsHWnd => _clyde._windowing!.WindowGetWin32Window(Reg);

@@ -1,8 +1,9 @@
 ﻿using System.Linq;
+using Robust.Shared.IoC;
 
 namespace Robust.Shared.GameObjects
 {
-    public class TimerSystem : EntitySystem
+    public sealed class TimerSystem : EntitySystem
     {
         public override void Update(float frameTime)
         {
@@ -17,9 +18,8 @@ namespace Robust.Shared.GameObjects
 
             foreach (var timer in timers)
             {
-                if (!timer.Deleted && !timer.Owner.Deleted && timer.RemoveOnEmpty && timer.TimerCount == 0)
-                {
-                    EntityManager.RemoveComponent<TimerComponent>(timer.Owner.Uid);
+                if (!timer.Deleted && !EntityManager.Deleted(timer.Owner) && timer.RemoveOnEmpty && timer.TimerCount == 0)                {
+                    EntityManager.RemoveComponent<TimerComponent>(timer.Owner);
                 }
             }
         }

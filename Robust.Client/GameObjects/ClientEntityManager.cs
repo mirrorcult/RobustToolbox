@@ -27,33 +27,29 @@ namespace Robust.Client.GameObjects
         public override void Initialize()
         {
             SetupNetworking();
-            ReceivedComponentMessage += (_, compMsg) => DispatchComponentMessage(compMsg);
             ReceivedSystemMessage += (_, systemMsg) => EventBus.RaiseEvent(EventSource.Network, systemMsg);
 
             base.Initialize();
         }
 
-        IEntity IClientEntityManagerInternal.CreateEntity(string? prototypeName, EntityUid? uid)
+        EntityUid IClientEntityManagerInternal.CreateEntity(string? prototypeName, EntityUid uid)
         {
             return base.CreateEntity(prototypeName, uid);
         }
 
-        void IClientEntityManagerInternal.InitializeEntity(IEntity entity)
+        void IClientEntityManagerInternal.InitializeEntity(EntityUid entity, MetaDataComponent? meta = null)
         {
-            base.InitializeEntity((Entity)entity);
+            base.InitializeEntity(entity, meta);
         }
 
-        void IClientEntityManagerInternal.StartEntity(IEntity entity)
+        void IClientEntityManagerInternal.StartEntity(EntityUid entity)
         {
-            base.StartEntity((Entity)entity);
+            base.StartEntity(entity);
         }
 
         #region IEntityNetworkManager impl
 
         public override IEntityNetworkManager EntityNetManager => this;
-
-        /// <inheritdoc />
-        public event EventHandler<NetworkComponentMessage>? ReceivedComponentMessage;
 
         /// <inheritdoc />
         public event EventHandler<object>? ReceivedSystemMessage;
@@ -67,7 +63,7 @@ namespace Robust.Client.GameObjects
             _networkManager.RegisterNetMessage<MsgEntity>(HandleEntityNetworkMessage);
         }
 
-        public override void TickUpdate(float frameTime, Histogram? histogram)
+        public override void TickUpdate(float frameTime, bool noPredictions, Histogram? histogram)
         {
             using (histogram?.WithLabels("EntityNet").NewTimer())
             {
@@ -79,7 +75,7 @@ namespace Robust.Client.GameObjects
                 }
             }
 
-            base.TickUpdate(frameTime, histogram);
+            base.TickUpdate(frameTime, noPredictions, histogram);
         }
 
         /// <inheritdoc />
@@ -90,7 +86,7 @@ namespace Robust.Client.GameObjects
 
         public void SendSystemNetworkMessage(EntityEventArgs message, uint sequence)
         {
-            var msg = _networkManager.CreateNetMessage<MsgEntity>();
+            var msg = new MsgEntity();
             msg.Type = EntityMessageType.SystemMessage;
             msg.SystemMessage = message;
             msg.SourceTick = _gameTiming.CurTick;
@@ -103,25 +99,6 @@ namespace Robust.Client.GameObjects
         public void SendSystemNetworkMessage(EntityEventArgs message, INetChannel channel)
         {
             throw new NotSupportedException();
-        }
-
-        /// <inheritdoc />
-        [Obsolete("Component Messages are deprecated, use Entity Events instead.")]
-        public void SendComponentNetworkMessage(INetChannel? channel, IEntity entity, IComponent component, ComponentMessage message)
-        {
-            var netId = ComponentFactory.GetRegistration(component.GetType()).NetID;
-
-            if (!netId.HasValue)
-                throw new ArgumentException($"Component {component.Name} does not have a NetID.", nameof(component));
-
-            var msg = _networkManager.CreateNetMessage<MsgEntity>();
-            msg.Type = EntityMessageType.ComponentMessage;
-            msg.EntityUid = entity.Uid;
-            msg.NetId = netId.Value;
-            msg.ComponentMessage = message;
-            msg.SourceTick = _gameTiming.CurTick;
-
-            _networkManager.ClientSendMessage(msg);
         }
 
         private void HandleEntityNetworkMessage(MsgEntity message)
@@ -142,10 +119,6 @@ namespace Robust.Client.GameObjects
         {
             switch (message.Type)
             {
-                case EntityMessageType.ComponentMessage:
-                    ReceivedComponentMessage?.Invoke(this, new NetworkComponentMessage(message));
-                    return;
-
                 case EntityMessageType.SystemMessage:
                     var msg = message.SystemMessage;
                     var sessionType = typeof(EntitySessionMessage<>).MakeGenericType(msg.GetType());

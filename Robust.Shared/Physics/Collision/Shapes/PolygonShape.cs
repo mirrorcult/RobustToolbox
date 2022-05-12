@@ -29,12 +29,13 @@ using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
+using Vector2 = Robust.Shared.Maths.Vector2;
 
 namespace Robust.Shared.Physics.Collision.Shapes
 {
     [Serializable, NetSerializable]
     [DataDefinition]
-    public class PolygonShape : IPhysShape, ISerializationHooks, IApproxEquatable<PolygonShape>
+    public sealed class PolygonShape : IPhysShape, ISerializationHooks, IApproxEquatable<PolygonShape>
     {
         [ViewVariables]
         public int VertexCount => Vertices.Length;
@@ -88,10 +89,14 @@ namespace Robust.Shared.Physics.Collision.Shapes
         {
             var configManager = IoCManager.Resolve<IConfigurationManager>();
             DebugTools.Assert(vertices.Length >= 3 && vertices.Length <= configManager.GetCVar(CVars.MaxPolygonVertices));
+            SetVertices(vertices, configManager.GetCVar(CVars.ConvexHullPolygons));
+        }
 
+        public void SetVertices(Span<Vector2> vertices, bool convexHulls)
+        {
             var vertexCount = vertices.Length;
 
-            if (configManager.GetCVar(CVars.ConvexHullPolygons))
+            if (convexHulls)
             {
                 //FPE note: This check is required as the GiftWrap algorithm early exits on triangles
                 //So instead of giftwrapping a triangle, we just force it to be clock wise.
@@ -127,17 +132,12 @@ namespace Robust.Shared.Physics.Collision.Shapes
                 Normals[i] = temp.Normalized;
             }
 
-            Centroid = ComputeCentroid(Vertices);
-
-            // Compute the polygon mass data
-            // TODO: Update fixture. Maybe use events for it? Who tf knows.
-            // If we get grid polys then we'll actually need runtime updating of bbs.
+            // TODO: Updates (network etc)
+            Centroid = ComputeCentroid(Vertices, VertexCount);
         }
 
-        private Vector2 ComputeCentroid(Vector2[] vertices)
+        private static Vector2 ComputeCentroid(Vector2[] vs, int count)
         {
-            var count = vertices.Length;
-
             DebugTools.Assert(count >= 3);
 
             var c = new Vector2(0.0f, 0.0f);
@@ -145,16 +145,16 @@ namespace Robust.Shared.Physics.Collision.Shapes
 
             // Get a reference point for forming triangles.
             // Use the first vertex to reduce round-off errors.
-            var s = vertices[0];
+            var s = vs[0];
 
             const float inv3 = 1.0f / 3.0f;
 
             for (var i = 0; i < count; ++i)
             {
                 // Triangle vertices.
-                var p1 = vertices[0] - s;
-                var p2 = vertices[i] - s;
-                var p3 = i + 1 < count ? vertices[i+1] - s : vertices[0] - s;
+                var p1 = vs[0] - s;
+                var p2 = vs[i] - s;
+                var p3 = i + 1 < count ? vs[i+1] - s : vs[0] - s;
 
                 var e1 = p2 - p1;
                 var e2 = p3 - p1;
@@ -175,6 +175,9 @@ namespace Robust.Shared.Physics.Collision.Shapes
         }
 
         public ShapeType ShapeType => ShapeType.Polygon;
+
+        /// <inheritdoc />
+        public Box2 LocalBounds => CalcLocalBounds();
 
         public PolygonShape()
         {
@@ -213,30 +216,28 @@ namespace Robust.Shared.Physics.Collision.Shapes
 
         public void SetAsBox(float halfWidth, float halfHeight, Vector2 center, float angle)
         {
-            Span<Vector2> verts = stackalloc Vector2[4];
+            Vertices = new Vector2[4];
+            Normals = new Vector2[4];
             // Damn normies
-            Span<Vector2> norms = stackalloc Vector2[4];
 
-            verts[0] = new Vector2(-halfWidth, -halfHeight);
-            verts[1] = new Vector2(halfWidth, -halfHeight);
-            verts[2] = new Vector2(halfWidth, halfHeight);
-            verts[3] = new Vector2(-halfWidth, halfHeight);
-            norms[0] = new Vector2(0f, -1f);
-            norms[1] = new Vector2(1f, 0f);
-            norms[2] = new Vector2(0f, 1f);
-            norms[3] = new Vector2(-1f, 0f);
+            Vertices[0] = new Vector2(-halfWidth, -halfHeight);
+            Vertices[1] = new Vector2(halfWidth, -halfHeight);
+            Vertices[2] = new Vector2(halfWidth, halfHeight);
+            Vertices[3] = new Vector2(-halfWidth, halfHeight);
+            Normals[0] = new Vector2(0f, -1f);
+            Normals[1] = new Vector2(1f, 0f);
+            Normals[2] = new Vector2(0f, 1f);
+            Normals[3] = new Vector2(-1f, 0f);
 
             Centroid = center;
 
             var xf = new Transform(center, angle);
-            Array.Resize(ref Vertices, 4);
-            Array.Resize(ref Normals, 4);
 
             // Transform vertices and normals.
-            for (var i = 0; i < verts.Length; ++i)
+            for (var i = 0; i < VertexCount; ++i)
             {
-                Vertices[i] = Transform.Mul(xf, verts[i]);
-                Normals[i] = Transform.Mul(xf.Quaternion2D, norms[i]);
+                Vertices[i] = Transform.Mul(xf, Vertices[i]);
+                Normals[i] = Transform.Mul(xf.Quaternion2D, Normals[i]);
             }
         }
 
@@ -288,9 +289,20 @@ namespace Robust.Shared.Physics.Collision.Shapes
             return new Box2(lower - r, upper + r);
         }
 
-        public void ApplyState()
+        private Box2 CalcLocalBounds()
         {
-            return;
+            var lower = Vertices[0];
+            var upper = lower;
+
+            for (var i = 1; i < Vertices.Length; ++i)
+            {
+                var v = Vertices[i];
+                lower = Vector2.ComponentMin(lower, v);
+                upper = Vector2.ComponentMax(upper, v);
+            }
+
+            var r = new Vector2(_radius, _radius);
+            return new Box2(lower - r, upper + r);
         }
 
         public static explicit operator PolygonShape(PhysShapeAabb aabb)

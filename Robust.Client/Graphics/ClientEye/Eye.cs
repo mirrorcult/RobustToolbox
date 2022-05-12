@@ -7,6 +7,7 @@ using Robust.Shared.ViewVariables;
 namespace Robust.Client.Graphics
 {
     /// <inheritdoc />
+    [Virtual]
     public class Eye : IEye
     {
         private Vector2 _scale = Vector2.One/2f;
@@ -24,6 +25,9 @@ namespace Robust.Client.Graphics
             get => _coords;
             internal set => _coords = value;
         }
+
+        [ViewVariables(VVAccess.ReadWrite)]
+        public Vector2 Offset { get; set; }
 
         /// <inheritdoc />
         [ViewVariables(VVAccess.ReadWrite)]
@@ -51,6 +55,15 @@ namespace Robust.Client.Graphics
 
         /// <inheritdoc />
         public void GetViewMatrix(out Matrix3 viewMatrix, Vector2 renderScale)
+        {
+            var scaleMat = Matrix3.CreateScale(_scale.X * renderScale.X, _scale.Y * renderScale.Y);
+            var rotMat = Matrix3.CreateRotation(_rotation);
+            var transMat = Matrix3.CreateTranslation(-_coords.Position - Offset);
+
+            viewMatrix = transMat * rotMat * scaleMat;
+        }
+
+        public void GetViewMatrixNoOffset(out Matrix3 viewMatrix, Vector2 renderScale)
         {
             var scaleMat = Matrix3.CreateScale(_scale.X * renderScale.X, _scale.Y * renderScale.Y);
             var rotMat = Matrix3.CreateRotation(_rotation);

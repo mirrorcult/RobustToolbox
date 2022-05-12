@@ -83,6 +83,11 @@ namespace Robust.UnitTesting
 
             public void Shutdown(string reason)
             {
+                Reset(reason);
+            }
+
+            public void Reset(string reason)
+            {
                 foreach (var channel in _channels.Values.ToList())
                 {
                     channel.Disconnect(reason);
@@ -282,7 +287,7 @@ namespace Robust.UnitTesting
                     _callbacks.Add(typeof(T), msg => rxCallback((T) msg));
             }
 
-            public T CreateNetMessage<T>() where T : NetMessage
+            public T CreateNetMessage<T>() where T : NetMessage, new()
             {
                 var type = typeof(T);
 
@@ -302,7 +307,7 @@ namespace Robust.UnitTesting
                 }
             }
 
-            public byte[]? RsaPublicKey => null;
+            public byte[]? CryptoPublicKey => null;
             public AuthMode Auth => AuthMode.Disabled;
             public Func<string, Task<NetUserId?>>? AssignUserIdCallback { get; set; }
             public IServerNetManager.NetApprovalDelegate? HandleApprovalCallback { get; set; }
@@ -310,6 +315,8 @@ namespace Robust.UnitTesting
             public void DisconnectChannel(INetChannel channel, string reason)
             {
                 channel.Disconnect(reason);
+                _channels.Remove(((IntegrationNetChannel) channel).RemoteUid);
+                Disconnect?.Invoke(this, new NetDisconnectedArgs(channel, string.Empty));
             }
 
             INetChannel? IClientNetManager.ServerChannel => ServerChannel;
@@ -422,7 +429,7 @@ namespace Robust.UnitTesting
                     RemoteUid = remoteUid;
                 }
 
-                public T CreateNetMessage<T>() where T : NetMessage
+                public T CreateNetMessage<T>() where T : NetMessage, new()
                 {
                     return _owner.CreateNetMessage<T>();
                 }
@@ -437,6 +444,12 @@ namespace Robust.UnitTesting
                     OtherChannel.TryWrite(new DisconnectMessage(RemoteUid));
 
                     IsConnected = false;
+                }
+
+                public void Disconnect(string reason, bool sendBye)
+                {
+                    // Don't handle bye sending in here I guess.
+                    Disconnect(reason);
                 }
             }
 

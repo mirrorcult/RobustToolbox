@@ -7,7 +7,6 @@ using System.Linq;
 using JetBrains.Annotations;
 using Robust.Client.GameObjects;
 using Robust.Client.Input;
-using Robust.Client.Map;
 using Robust.Client.Player;
 using Robust.Client.Timing;
 using Robust.Shared;
@@ -18,6 +17,7 @@ using Robust.Shared.GameStates;
 using Robust.Shared.Input;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
+using Robust.Shared.Map;
 using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
 using Robust.Shared.Players;
@@ -28,7 +28,7 @@ namespace Robust.Client.GameStates
 {
     /// <inheritdoc />
     [UsedImplicitly]
-    public class ClientGameStateManager : IClientGameStateManager
+    public sealed class ClientGameStateManager : IClientGameStateManager
     {
         private GameStateProcessor _processor = default!;
 
@@ -39,15 +39,16 @@ namespace Robust.Client.GameStates
             _pendingSystemMessages
                 = new();
 
+        private readonly Dictionary<EntityUid, MapId> _hiddenEntities = new();
+
         private uint _metaCompNetId;
 
         [Dependency] private readonly IComponentFactory _compFactory = default!;
         [Dependency] private readonly IClientEntityManagerInternal _entities = default!;
-        [Dependency] private readonly IEntityLookup _lookup = default!;
         [Dependency] private readonly IPlayerManager _players = default!;
         [Dependency] private readonly IClientNetManager _network = default!;
         [Dependency] private readonly IBaseClient _client = default!;
-        [Dependency] private readonly IClientMapManager _mapManager = default!;
+        [Dependency] private readonly INetworkedMapManager _mapManager = default!;
         [Dependency] private readonly IClientGameTiming _timing = default!;
         [Dependency] private readonly INetConfigurationManager _config = default!;
         [Dependency] private readonly IEntitySystemManager _entitySystemManager = default!;
@@ -56,6 +57,8 @@ namespace Robust.Client.GameStates
 #if EXCEPTION_TOLERANCE
         [Dependency] private readonly IRuntimeLog _runtimeLog = default!;
 #endif
+
+        private ISawmill _sawmill = default!;
 
         /// <inheritdoc />
         public int MinBufferSize => _processor.MinBufferSize;
@@ -66,7 +69,7 @@ namespace Robust.Client.GameStates
         /// <inheritdoc />
         public int CurrentBufferSize => _processor.CalculateBufferSize(CurServerTick);
 
-        public bool Predicting { get; private set; }
+        public bool IsPredictionEnabled { get; private set; }
 
         public int PredictTickBias { get; private set; }
         public float PredictLagBias { get; private set; }
@@ -84,6 +87,7 @@ namespace Robust.Client.GameStates
         /// <inheritdoc />
         public void Initialize()
         {
+            _sawmill = Logger.GetSawmill(CVars.NetPredict.Name);
             _processor = new GameStateProcessor(_timing);
 
             _network.RegisterNetMessage<MsgState>(HandleStateMessage);
@@ -93,7 +97,7 @@ namespace Robust.Client.GameStates
             _config.OnValueChanged(CVars.NetInterp, b => _processor.Interpolation = b, true);
             _config.OnValueChanged(CVars.NetInterpRatio, i => _processor.InterpRatio = i, true);
             _config.OnValueChanged(CVars.NetLogging, b => _processor.Logging = b, true);
-            _config.OnValueChanged(CVars.NetPredict, b => Predicting = b, true);
+            _config.OnValueChanged(CVars.NetPredict, b => IsPredictionEnabled = b, true);
             _config.OnValueChanged(CVars.NetPredictTickBias, i => PredictTickBias = i, true);
             _config.OnValueChanged(CVars.NetPredictLagBias, i => PredictLagBias = i, true);
             _config.OnValueChanged(CVars.NetStateBufMergeThreshold, i => StateBufferMergeThreshold = i, true);
@@ -101,7 +105,7 @@ namespace Robust.Client.GameStates
             _processor.Interpolation = _config.GetCVar(CVars.NetInterp);
             _processor.InterpRatio = _config.GetCVar(CVars.NetInterpRatio);
             _processor.Logging = _config.GetCVar(CVars.NetLogging);
-            Predicting = _config.GetCVar(CVars.NetPredict);
+            IsPredictionEnabled = _config.GetCVar(CVars.NetPredict);
             PredictTickBias = _config.GetCVar(CVars.NetPredictTickBias);
             PredictLagBias = _config.GetCVar(CVars.NetPredictLagBias);
 
@@ -132,7 +136,7 @@ namespace Robust.Client.GameStates
 
         public void InputCommandDispatched(FullInputCmdMessage message)
         {
-            if (!Predicting)
+            if (!IsPredictionEnabled)
             {
                 return;
             }
@@ -140,16 +144,15 @@ namespace Robust.Client.GameStates
             message.InputSequence = _nextInputCmdSeq;
             _pendingInputs.Enqueue(message);
 
-            var inputMan = IoCManager.Resolve<IInputManager>();
-            inputMan.NetworkBindMap.TryGetKeyFunction(message.InputFunctionId, out var boundFunc);
-            Logger.DebugS(CVars.NetPredict.Name,
+            _inputManager.NetworkBindMap.TryGetKeyFunction(message.InputFunctionId, out var boundFunc);
+            _sawmill.Debug(
                 $"CL> SENT tick={_timing.CurTick}, sub={_timing.TickFraction}, seq={_nextInputCmdSeq}, func={boundFunc.FunctionName}, state={message.State}");
             _nextInputCmdSeq++;
         }
 
         public uint SystemMessageDispatched<T>(T message) where T : EntityEventArgs
         {
-            if (!Predicting)
+            if (!IsPredictionEnabled)
             {
                 return default;
             }
@@ -212,7 +215,7 @@ namespace Robust.Client.GameStates
 
                 // TODO: If Predicting gets disabled *while* the world state is dirty from a prediction,
                 // this won't run meaning it could potentially get stuck dirty.
-                if (Predicting && i == 0)
+                if (IsPredictionEnabled && i == 0)
                 {
                     // Disable IsFirstTimePredicted while re-running HandleComponentState here.
                     // Helps with debugging.
@@ -236,7 +239,7 @@ namespace Robust.Client.GameStates
 
                 if (_lastProcessedSeq < curState.LastProcessedInput)
                 {
-                    Logger.DebugS(CVars.NetPredict.Name, $"SV> RCV  tick={_timing.CurTick}, seq={_lastProcessedSeq}");
+                    _sawmill.Debug($"SV> RCV  tick={_timing.CurTick}, seq={_lastProcessedSeq}");
                     _lastProcessedSeq = curState.LastProcessedInput;
                 }
             }
@@ -255,8 +258,7 @@ namespace Robust.Client.GameStates
                 var inCmd = _pendingInputs.Dequeue();
 
                 _inputManager.NetworkBindMap.TryGetKeyFunction(inCmd.InputFunctionId, out var boundFunc);
-                Logger.DebugS(CVars.NetPredict.Name,
-                    $"SV>     seq={inCmd.InputSequence}, func={boundFunc.FunctionName}, state={inCmd.State}");
+                _sawmill.Debug($"SV>     seq={inCmd.InputSequence}, func={boundFunc.FunctionName}, state={inCmd.State}");
             }
 
             while (_pendingSystemMessages.Count > 0 && _pendingSystemMessages.Peek().sequence <= _lastProcessedSeq)
@@ -266,13 +268,13 @@ namespace Robust.Client.GameStates
 
             DebugTools.Assert(_timing.InSimulation);
 
-            if (Predicting)
+            if (IsPredictionEnabled)
             {
                 using var _ = _timing.StartPastPredictionArea();
 
                 if (_pendingInputs.Count > 0)
                 {
-                    Logger.DebugS(CVars.NetPredict.Name,  "CL> Predicted:");
+                    _sawmill.Debug("CL> Predicted:");
                 }
 
                 var pendingInputEnumerator = _pendingInputs.GetEnumerator();
@@ -297,7 +299,7 @@ namespace Robust.Client.GameStates
 
                         _inputManager.NetworkBindMap.TryGetKeyFunction(inputCmd.InputFunctionId, out var boundFunc);
 
-                        Logger.DebugS(CVars.NetPredict.Name,
+                        _sawmill.Debug(
                             $"    seq={inputCmd.InputSequence}, sub={inputCmd.SubTick}, dTick={tick}, func={boundFunc.FunctionName}, " +
                             $"state={inputCmd.State}");
 
@@ -322,37 +324,39 @@ namespace Robust.Client.GameStates
                         // Don't run EntitySystemManager.TickUpdate if this is the target tick,
                         // because the rest of the main loop will call into it with the target tick later,
                         // and it won't be a past prediction.
-                        _entitySystemManager.TickUpdate((float) _timing.TickPeriod.TotalSeconds);
+                        _entitySystemManager.TickUpdate((float) _timing.TickPeriod.TotalSeconds, noPredictions: false);
                         ((IBroadcastEventBusInternal) _entities.EventBus).ProcessEventQueue();
                     }
                 }
             }
 
-            _entities.TickUpdate((float) _timing.TickPeriod.TotalSeconds);
-
-            _lookup.Update();
+            _entities.TickUpdate((float) _timing.TickPeriod.TotalSeconds, noPredictions: !IsPredictionEnabled);
         }
 
         private void ResetPredictedEntities(GameTick curTick)
         {
-            foreach (var entity in _entities.GetEntities())
+            foreach (var meta in _entityManager.EntityQuery<MetaDataComponent>(true))
             {
+                var entity = meta.Owner;
+
                 // TODO: 99% there's an off-by-one here.
-                if (entity.Uid.IsClientSide() || entity.LastModifiedTick < curTick)
+                if (entity.IsClientSide() || meta.EntityLastModifiedTick < curTick)
                 {
                     continue;
                 }
 
-                Logger.DebugS(CVars.NetPredict.Name, $"Entity {entity.Uid} was made dirty.");
+                // Check log level first to avoid the string alloc.
+                if (_sawmill.Level <= LogLevel.Debug)
+                    _sawmill.Debug($"Entity {entity} was made dirty.");
 
-                if (!_processor.TryGetLastServerStates(entity.Uid, out var last))
+                if (!_processor.TryGetLastServerStates(entity, out var last))
                 {
                     // Entity was probably deleted on the server so do nothing.
                     continue;
                 }
 
                 // TODO: handle component deletions/creations.
-                foreach (var (netId, comp) in _entityManager.GetNetComponents(entity.Uid))
+                foreach (var (netId, comp) in _entityManager.GetNetComponents(entity))
                 {
                     DebugTools.AssertNotNull(netId);
 
@@ -361,7 +365,9 @@ namespace Robust.Client.GameStates
                         continue;
                     }
 
-                    Logger.DebugS(CVars.NetPredict.Name, $"  And also its component {comp.Name}");
+                    if (_sawmill.Level <= LogLevel.Debug)
+                        _sawmill.Debug($"  And also its component {comp.GetType()}");
+
                     // TODO: Handle interpolation.
                     var handleState = new ComponentHandleState(compState, null);
                     _entities.EventBus.RaiseComponentEvent(comp, ref handleState);
@@ -379,7 +385,6 @@ namespace Robust.Client.GameStates
             var outputData = new Dictionary<EntityUid, Dictionary<uint, ComponentState>>();
 
             Debug.Assert(_players.LocalPlayer != null, "_players.LocalPlayer != null");
-            var player = _players.LocalPlayer.Session;
 
             var bus = _entityManager.EventBus;
 
@@ -390,7 +395,7 @@ namespace Robust.Client.GameStates
 
                 foreach (var (netId, component) in _entityManager.GetNetComponents(createdEntity))
                 {
-                    var state = _entityManager.GetComponentState(bus, component, player);
+                    var state = _entityManager.GetComponentState(bus, component);
 
                     if(state.GetType() == typeof(ComponentState))
                         continue;
@@ -404,7 +409,7 @@ namespace Robust.Client.GameStates
 
         private void AckGameState(GameTick sequence)
         {
-            var msg = _network.CreateNetMessage<MsgStateAck>();
+            var msg = new MsgStateAck();
             msg.Sequence = sequence;
             _network.ClientSendMessage(msg);
         }
@@ -416,7 +421,6 @@ namespace Robust.Client.GameStates
             var createdEntities = ApplyEntityStates(curState.EntityStates.Span, curState.EntityDeletions.Span,
                 nextState != null ? nextState.EntityStates.Span : default);
             _players.ApplyPlayerStates(curState.PlayerStates.Value ?? Array.Empty<PlayerState>());
-            _mapManager.ApplyGameStatePost(curState.MapData);
 
             GameStateApplied?.Invoke(new GameStateAppliedArgs(curState));
             return createdEntities;
@@ -425,44 +429,47 @@ namespace Robust.Client.GameStates
         private List<EntityUid> ApplyEntityStates(ReadOnlySpan<EntityState> curEntStates, ReadOnlySpan<EntityUid> deletions,
             ReadOnlySpan<EntityState> nextEntStates)
         {
-            var toApply = new Dictionary<IEntity, (EntityState?, EntityState?)>();
-            var toInitialize = new List<Entity>();
+            var toApply = new Dictionary<EntityUid, (EntityState?, EntityState?)>(curEntStates.Length);
+            var toInitialize = new List<EntityUid>();
             var created = new List<EntityUid>();
 
             foreach (var es in curEntStates)
             {
+                var uid = es.Uid;
                 //Known entities
-                if (_entities.TryGetEntity(es.Uid, out var entity))
+                if (_entities.EntityExists(uid))
                 {
                     // Logger.Debug($"[{IGameTiming.TickStampStatic}] MOD {es.Uid}");
-                    toApply.Add(entity, (es, null));
+                    toApply.Add(uid, (es, null));
                 }
                 else //Unknown entities
                 {
                     var metaState = (MetaDataComponentState?) es.ComponentChanges.Value?.FirstOrDefault(c => c.NetID == _metaCompNetId).State;
                     if (metaState == null)
                     {
-                        throw new InvalidOperationException($"Server sent new entity state for {es.Uid} without metadata component!");
+                        throw new InvalidOperationException($"Server sent new entity state for {uid} without metadata component!");
                     }
                     // Logger.Debug($"[{IGameTiming.TickStampStatic}] CREATE {es.Uid} {metaState.PrototypeId}");
-                    var newEntity = (Entity)_entities.CreateEntity(metaState.PrototypeId, es.Uid);
+                    var newEntity = _entities.CreateEntity(metaState.PrototypeId, uid);
                     toApply.Add(newEntity, (es, null));
                     toInitialize.Add(newEntity);
-                    created.Add(newEntity.Uid);
+                    created.Add(newEntity);
                 }
             }
 
             foreach (var es in nextEntStates)
             {
-                if (_entities.TryGetEntity(es.Uid, out var entity))
+                var uid = es.Uid;
+
+                if (_entities.EntityExists(uid))
                 {
-                    if (toApply.TryGetValue(entity, out var state))
+                    if (toApply.TryGetValue(uid, out var state))
                     {
-                        toApply[entity] = (state.Item1, es);
+                        toApply[uid] = (state.Item1, es);
                     }
                     else
                     {
-                        toApply[entity] = (null, es);
+                        toApply[uid] = (null, es);
                     }
                 }
             }
@@ -471,7 +478,7 @@ namespace Robust.Client.GameStates
             foreach (var kvStates in toApply)
             {
                 var ent = kvStates.Key;
-                var entity = (Entity) ent;
+                var entity = ent;
                 HandleEntityState(entity, _entities.EventBus, kvStates.Value.Item1,
                     kvStates.Value.Item2);
             }
@@ -483,7 +490,7 @@ namespace Robust.Client.GameStates
             }
 
 #if EXCEPTION_TOLERANCE
-            HashSet<Entity> brokenEnts = new HashSet<Entity>();
+            HashSet<EntityUid> brokenEnts = new HashSet<EntityUid>();
 #endif
 
             foreach (var entity in toInitialize)
@@ -497,7 +504,7 @@ namespace Robust.Client.GameStates
                 }
                 catch (Exception e)
                 {
-                    Logger.ErrorS("state", $"Server entity threw in Init: uid={entity.Uid}, proto={entity.Prototype}\n{e}");
+                    Logger.ErrorS("state", $"Server entity threw in Init: ent={_entityManager.ToPrettyString(entity)}\n{e}");
                     brokenEnts.Add(entity);
                 }
 #endif
@@ -517,37 +524,32 @@ namespace Robust.Client.GameStates
                 }
                 catch (Exception e)
                 {
-                    Logger.ErrorS("state", $"Server entity threw in Start: uid={entity.Uid}, proto={entity.Prototype}\n{e}");
+                    Logger.ErrorS("state", $"Server entity threw in Start: ent={_entityManager.ToPrettyString(entity)}\n{e}");
                     brokenEnts.Add(entity);
                 }
 #endif
             }
 
-            foreach (var entity in toInitialize)
-            {
-#if EXCEPTION_TOLERANCE
-                if (brokenEnts.Contains(entity))
-                    continue;
-#endif
-            }
 #if EXCEPTION_TOLERANCE
             foreach (var entity in brokenEnts)
             {
-                entity.Delete();
+                _entityManager.DeleteEntity(entity);
             }
 #endif
 
             return created;
         }
 
-        private void HandleEntityState(IEntity entity, IEventBus bus, EntityState? curState,
+        private void HandleEntityState(EntityUid entity, IEventBus bus, EntityState? curState,
             EntityState? nextState)
         {
             var compStateWork = new Dictionary<ushort, (ComponentState? curState, ComponentState? nextState)>();
-            var entityUid = entity.Uid;
+            var entityUid = entity;
 
             if (curState != null)
             {
+                compStateWork.EnsureCapacity(curState.ComponentChanges.Span.Length);
+
                 foreach (var compChange in curState.ComponentChanges.Span)
                 {
                     if (compChange.Deleted)
@@ -580,6 +582,8 @@ namespace Robust.Client.GameStates
 
             if (nextState != null)
             {
+                compStateWork.EnsureCapacity(compStateWork.Count + nextState.ComponentChanges.Span.Length);
+
                 foreach (var compState in nextState.ComponentChanges.Span)
                 {
                     if (compStateWork.TryGetValue(compState.NetID, out var state))
@@ -595,7 +599,7 @@ namespace Robust.Client.GameStates
 
             foreach (var (netId, (cur, next)) in compStateWork)
             {
-                if (_entityManager.TryGetComponent(entityUid, (ushort) netId, out var component))
+                if (_entityManager.TryGetComponent(entityUid, netId, out var component))
                 {
                     try
                     {
@@ -606,7 +610,7 @@ namespace Robust.Client.GameStates
                     catch (Exception e)
                     {
                         var wrapper = new ComponentStateApplyException(
-                            $"Failed to apply comp state: entity={component.Owner}, comp={component.Name}", e);
+                            $"Failed to apply comp state: entity={component.Owner}, comp={component.GetType()}", e);
 #if EXCEPTION_TOLERANCE
                     _runtimeLog.LogException(wrapper, "Component state apply");
 #else
@@ -633,7 +637,7 @@ namespace Robust.Client.GameStates
         }
     }
 
-    public class GameStateAppliedArgs : EventArgs
+    public sealed class GameStateAppliedArgs : EventArgs
     {
         public GameState AppliedState { get; }
 

@@ -5,8 +5,6 @@ namespace Robust.Shared.GameObjects
     [RegisterComponent]
     public sealed class EntityLookupComponent : Component
     {
-        public override string Name => "EntityLookup";
-
-        internal DynamicTree<IEntity> Tree = default!;
+        internal DynamicTree<EntityUid> Tree = default!;
     }
 }

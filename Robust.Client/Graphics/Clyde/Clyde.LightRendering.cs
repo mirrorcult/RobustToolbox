@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Buffers;
 using OpenToolkit.Graphics.OpenGL4;
@@ -6,6 +6,7 @@ using Robust.Client.GameObjects;
 using Robust.Client.ResourceManagement;
 using Robust.Shared;
 using Robust.Shared.GameObjects;
+using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
@@ -327,13 +328,14 @@ namespace Robust.Client.Graphics.Clyde
             var mapId = eye.Position.MapId;
 
             // If this map has lighting disabled, return
-            if (!_mapManager.GetMapEntity(mapId).GetComponent<IMapComponent>().LightingEnabled)
+            var mapUid = _mapManager.GetMapEntityId(mapId);
+            if (!_entityManager.GetComponent<IMapComponent>(mapUid).LightingEnabled)
             {
                 return;
             }
 
             var (lights, count, expandedBounds) = GetLightsToRender(mapId, worldBounds, worldAABB);
-            eye.GetViewMatrix(out var eyeTransform, eye.Scale);
+            eye.GetViewMatrixNoOffset(out var eyeTransform, eye.Scale);
 
             UpdateOcclusionGeometry(mapId, expandedBounds, eyeTransform);
 
@@ -411,7 +413,7 @@ namespace Robust.Client.Graphics.Clyde
             {
                 var (component, lightPos, _) = lights[i];
 
-                var transform = component.Owner.Transform;
+                var transform = _entityManager.GetComponent<TransformComponent>(component.Owner);
 
                 Texture? mask = null;
                 var rotation = Angle.Zero;
@@ -515,13 +517,14 @@ namespace Robust.Client.Graphics.Clyde
             var enlargedBounds = worldAABB.Enlarged(renderingTreeSystem.MaxLightRadius);
 
             // Use worldbounds for this one as we only care if the light intersects our actual bounds
-            var state = (this, worldAABB, count: 0);
+            var state = (this, worldAABB, count: 0, shadowCastingCount: 0);
+            var xforms = _entityManager.GetEntityQuery<TransformComponent>();
 
             foreach (var comp in renderingTreeSystem.GetRenderTrees(map, enlargedBounds))
             {
-                var bounds = comp.Owner.Transform.InvWorldMatrix.TransformBox(worldBounds);
+                var bounds = xforms.GetComponent(comp.Owner).InvWorldMatrix.TransformBox(worldBounds);
 
-                comp.LightTree.QueryAabb(ref state, (ref (Clyde clyde, Box2 worldAABB, int count) state, in PointLightComponent light) =>
+                comp.LightTree.QueryAabb(ref state, (ref (Clyde clyde, Box2 worldAABB, int count, int shadowCastingCount) state, in PointLightComponent light) =>
                 {
                     if (state.count >= LightsToRenderListSize)
                     {
@@ -529,7 +532,7 @@ namespace Robust.Client.Graphics.Clyde
                         return false;
                     }
 
-                    var transform = light.Owner.Transform;
+                    var transform = xforms.GetComponent(light.Owner);
 
                     if (float.IsNaN(transform.LocalPosition.X) || float.IsNaN(transform.LocalPosition.Y)) return true;
 
@@ -543,6 +546,9 @@ namespace Robust.Client.Graphics.Clyde
                         return true;
                     }
 
+                    // If the light is a shadow casting light, keep a separate track of that
+                    if (light.CastShadows) state.shadowCastingCount++;
+
                     float distanceSquared = (state.worldAABB.Center - lightPos).LengthSquared;
                     state.clyde._lightsToRenderList[state.count++] = (light, lightPos, distanceSquared);
 
@@ -550,17 +556,29 @@ namespace Robust.Client.Graphics.Clyde
                 }, bounds);
             }
 
-            if (state.count > _maxLightsPerScene)
+            if (state.shadowCastingCount > _maxLightsPerScene)
             {
-                // There are too many lights to fit in the scene.
+                // There are too many lights casting shadows to fit in the scene.
                 // This check must occur before occluder expansion, or else bad things happen.
-                // Sort lights by distance.
+
+                // First, partition the array based on whether the lights are shadow casting or not
+                // (non shadow casting lights should be the first partition, shadow casting lights the second)
                 Array.Sort(_lightsToRenderList, 0, state.count, Comparer<(PointLightComponent light, Vector2 pos, float distanceSquared)>.Create((x, y) =>
+                {
+                    if (x.light.CastShadows && !y.light.CastShadows) return 1;
+                    else if (!x.light.CastShadows && y.light.CastShadows) return -1;
+                    else return 0;
+                }));
+
+                // Next, sort just the shadow casting lights by distance.
+                Array.Sort(_lightsToRenderList, state.count - state.shadowCastingCount, state.shadowCastingCount, Comparer<(PointLightComponent light, Vector2 pos, float distanceSquared)>.Create((x, y) =>
                 {
                     return x.distanceSquared.CompareTo(y.distanceSquared);
                 }));
-                // Then effectively delete the furthest lights.
-                state.count = _maxLightsPerScene;
+
+                // Then effectively delete the furthest lights, by setting the end of the array to exclude N
+                // number of shadow casting lights (where N is the number above the max number per scene.)
+                state.count -= state.shadowCastingCount - _maxLightsPerScene;
             }
 
             // When culling occluders later, we can't just remove any occluders outside the worldBounds.
@@ -816,7 +834,6 @@ namespace Robust.Client.Graphics.Clyde
             // 3D geometry used during depth projection.
             // 2D mask geometry used to apply wall bleed.
 
-            // TODO: This code probably does not work correctly with rotated camera.
             // TODO: Yes this function throws and index exception if you reach maxOccluders.
 
             const int maxOccluders = 2048;
@@ -842,21 +859,24 @@ namespace Robust.Client.Graphics.Clyde
                 var ii = 0;
                 var imi = 0;
 
+                var xforms = _entityManager.GetEntityQuery<TransformComponent>();
+
                 foreach (var comp in occluderSystem.GetOccluderTrees(map, expandedBounds))
                 {
-                    var treeBounds = comp.Owner.Transform.InvWorldMatrix.TransformBox(expandedBounds);
+                    var treeBounds = xforms.GetComponent(comp.Owner).InvWorldMatrix.TransformBox(expandedBounds);
 
                     comp.Tree.QueryAabb((in OccluderComponent sOccluder) =>
                     {
-                        var occluder = (ClientOccluderComponent)sOccluder;
-                        var transform = occluder.Owner.Transform;
-                        if (!occluder.Enabled)
+                        var transform = xforms.GetComponent(sOccluder.Owner);
+                        if (!sOccluder.Enabled)
                         {
                             return true;
                         }
 
+                        var occluder = (ClientOccluderComponent)sOccluder;
+
                         var worldTransform = transform.WorldMatrix;
-                        var box = occluder.BoundingBox;
+                        var box = sOccluder.BoundingBox;
 
                         var tl = worldTransform.Transform(box.TopLeft);
                         var tr = worldTransform.Transform(box.TopRight);
@@ -900,10 +920,10 @@ namespace Robust.Client.Graphics.Clyde
                         //
 
                         // Calculate delta positions from camera.
-                        var (dTlX, dTlY) = eyeTransform.Transform(tl);
-                        var (dTrX, dTrY) = eyeTransform.Transform(tr);
-                        var (dBlX, dBlY) = eyeTransform.Transform(bl);
-                        var (dBrX, dBrY) = eyeTransform.Transform(br);
+                        var dTl = eyeTransform.Transform(tl);
+                        var dTr = eyeTransform.Transform(tr);
+                        var dBl = eyeTransform.Transform(bl);
+                        var dBr = eyeTransform.Transform(br);
 
                         // Get which neighbors are occluding.
                         var no = (occluder.Occluding & OccluderDir.North) != 0;
@@ -912,10 +932,26 @@ namespace Robust.Client.Graphics.Clyde
                         var wo = (occluder.Occluding & OccluderDir.West) != 0;
 
                         // Do visibility tests for occluders (described above).
-                        var tlV = dTlX > 0 && !wo || dTlY < 0 && !no;
-                        var trV = dTrX < 0 && !eo || dTrY < 0 && !no;
-                        var blV = dBlX > 0 && !wo || dBlY > 0 && !so;
-                        var brV = dBrX < 0 && !eo || dBrY > 0 && !so;
+                        bool CheckFaceEyeVis(Vector2 a, Vector2 b)
+                        {
+                            // get normal
+                            var alongNormal = b - a;
+                            var normal = alongNormal.Rotated90DegreesAnticlockwiseWorld.Normalized;
+                            // determine which side of the plane the face is on
+                            // the plane is at the origin of this coordinate system, which is also the eye
+                            // the normal of the plane is that of the face
+                            // therefore, if the dot <= 0, the face is facing the camera
+                            // I don't like this, but rotated occluders started happening
+                            return Vector2.Dot(normal, a) <= 0;
+                        }
+                        var nV = ((!no) && CheckFaceEyeVis(dTl, dTr));
+                        var sV = ((!so) && CheckFaceEyeVis(dBr, dBl));
+                        var eV = ((!eo) && CheckFaceEyeVis(dTr, dBr));
+                        var wV = ((!wo) && CheckFaceEyeVis(dBl, dTl));
+                        var tlV = nV || wV;
+                        var trV = nV || eV;
+                        var blV = sV || wV;
+                        var brV = sV || eV;
 
                         // Handle faces, rules described above.
                         // Note that "from above" it should be clockwise.

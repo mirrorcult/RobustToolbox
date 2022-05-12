@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Robust.Client.Graphics;
@@ -23,6 +23,7 @@ namespace Robust.Client.UserInterface
     internal sealed class UserInterfaceManager : IUserInterfaceManagerInternal
     {
         [Dependency] private readonly IInputManager _inputManager = default!;
+        [Dependency] private readonly IFontManager _fontManager = default!;
         [Dependency] private readonly IClydeInternal _clyde = default!;
         [Dependency] private readonly IGameTiming _gameTiming = default!;
         [Dependency] private readonly IPlayerManager _playerManager = default!;
@@ -54,7 +55,19 @@ namespace Robust.Client.UserInterface
 
         [ViewVariables] public Control? KeyboardFocused { get; private set; }
 
-        [ViewVariables] public Control? ControlFocused { get; private set; }
+        private Control? _controlFocused;
+        [ViewVariables]
+        public Control? ControlFocused
+        {
+            get => _controlFocused;
+            set
+            {
+                if (_controlFocused == value)
+                    return;
+                _controlFocused?.ControlFocusExited();
+                _controlFocused = value;
+            }
+        }
 
         [ViewVariables] public ViewportContainer MainViewport { get; private set; } = default!;
         [ViewVariables] public LayoutContainer StateRoot { get; private set; } = default!;
@@ -104,7 +117,7 @@ namespace Robust.Client.UserInterface
 
             _debugMonitors = new DebugMonitors(_gameTiming, _playerManager, _eyeManager, _inputManager, _stateManager,
                 _clyde, _netManager, _mapManager);
-            RootControl.AddChild(_debugMonitors);
+            DebugConsole.BelowConsole.AddChild(_debugMonitors);
 
             _inputManager.SetInputCommand(EngineKeyFunctions.ShowDebugConsole,
                 InputCmdHandler.FromDelegate(session => DebugConsole.Toggle()));
@@ -152,19 +165,19 @@ namespace Robust.Client.UserInterface
             };
             RootControl.AddChild(WindowRoot);
 
-            PopupRoot = new LayoutContainer
-            {
-                Name = "PopupRoot",
-                MouseFilter = Control.MouseFilterMode.Ignore
-            };
-            RootControl.AddChild(PopupRoot);
-
             ModalRoot = new PopupContainer
             {
                 Name = "ModalRoot",
                 MouseFilter = Control.MouseFilterMode.Ignore,
             };
             RootControl.AddChild(ModalRoot);
+
+            PopupRoot = new LayoutContainer
+            {
+                Name = "PopupRoot",
+                MouseFilter = Control.MouseFilterMode.Ignore
+            };
+            RootControl.AddChild(PopupRoot);
 
             _tooltip = new Tooltip();
             PopupRoot.AddChild(_tooltip);
@@ -348,7 +361,6 @@ namespace Robust.Client.UserInterface
                         RemoveModal(top);
                     else
                     {
-                        ControlFocused?.ControlFocusExited();
                         ControlFocused = top;
                         hitData = null;
                         return false; // prevent anything besides the top modal control from receiving input
@@ -360,17 +372,21 @@ namespace Robust.Client.UserInterface
                 }
             }
 
-            ReleaseKeyboardFocus();
 
             if (hit == null)
             {
+                ReleaseKeyboardFocus();
                 hitData = null;
                 return false;
             }
 
             var (control, rel) = hit.Value;
 
-            ControlFocused?.ControlFocusExited();
+            if (control != KeyboardFocused)
+            {
+                ReleaseKeyboardFocus();
+            }
+
             ControlFocused = control;
 
             if (ControlFocused.CanKeyboardFocus && ControlFocused.KeyboardFocusOnClick)
@@ -384,7 +400,6 @@ namespace Robust.Client.UserInterface
 
         public void HandleCanFocusUp()
         {
-            ControlFocused?.ControlFocusExited();
             ControlFocused = null;
         }
 
@@ -541,7 +556,7 @@ namespace Robust.Client.UserInterface
 
         public void Popup(string contents, string title = "Alert!")
         {
-            var popup = new SS14Window
+            var popup = new DefaultWindow
             {
                 Title = title
             };
@@ -646,7 +661,6 @@ namespace Robust.Client.UserInterface
             }
 
             if (control != ControlFocused) return;
-            ControlFocused?.ControlFocusExited();
             ControlFocused = null;
         }
 
@@ -830,9 +844,11 @@ namespace Robust.Client.UserInterface
             }
         }
 
-        private static void _doGuiInput<T>(Control? control, T guiEvent, Action<Control, T> action,
+        private static void _doGuiInput(
+            Control? control,
+            GUIBoundKeyEventArgs guiEvent,
+            Action<Control, GUIBoundKeyEventArgs> action,
             bool ignoreStop = false)
-            where T : GUIBoundKeyEventArgs
         {
             while (control != null)
             {
@@ -941,14 +957,37 @@ namespace Robust.Client.UserInterface
         private void WindowContentScaleChanged(WindowContentScaleEventArgs args)
         {
             if (_windowsToRoot.TryGetValue(args.Window.Id, out var root))
+            {
                 UpdateUIScale(root);
+                _fontManager.ClearFontCache();
+            }
+
+        }
+
+        private float CalculateAutoScale(WindowRoot root)
+        {
+            //Grab the OS UIScale or the value set through CVAR debug
+            var osScale = _configurationManager.GetCVar(CVars.DisplayUIScale);
+            osScale = osScale == 0f ? root.Window.ContentScale.X : osScale;
+            var windowSize = root.Window.RenderTarget.Size;
+            //Only run autoscale if it is enabled, otherwise default to just use OS UIScale
+            if (!root.AutoScale && (windowSize.X <= 0 || windowSize.Y <= 0)) return osScale;
+            var maxScaleRes = root.AutoScaleUpperCutoff;
+            var minScaleRes = root.AutoScaleLowerCutoff;
+            var autoScaleMin = root.AutoScaleMinimum;
+            float scaleRatioX;
+            float scaleRatioY;
+
+            //Calculate the scale ratios and clamp it between the maximums and minimums
+            scaleRatioX = Math.Clamp(((float) windowSize.X - minScaleRes.X) / (maxScaleRes.X - minScaleRes.X) * osScale, autoScaleMin, osScale);
+            scaleRatioY = Math.Clamp(((float) windowSize.Y - minScaleRes.Y) / (maxScaleRes.Y - minScaleRes.Y) * osScale, autoScaleMin, osScale);
+            //Take the smallest UIScale value and use it for UI scaling
+            return Math.Min(scaleRatioX, scaleRatioY);
         }
 
         private void UpdateUIScale(WindowRoot root)
         {
-            var newVal = _configurationManager.GetCVar(CVars.DisplayUIScale);
-            root.UIScaleSet = newVal == 0f ? root.Window.ContentScale.X : newVal;
-
+            root.UIScaleSet = CalculateAutoScale(root);
             _propagateUIScaleChanged(root);
             root.InvalidateMeasure();
         }
@@ -967,7 +1006,7 @@ namespace Robust.Client.UserInterface
         {
             if (!_windowsToRoot.TryGetValue(windowResizedEventArgs.Window.Id, out var root))
                 return;
-
+            UpdateUIScale(root);
             root.InvalidateMeasure();
         }
 

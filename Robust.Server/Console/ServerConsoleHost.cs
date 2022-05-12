@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Robust.Server.Player;
 using Robust.Shared.Console;
+using Robust.Shared.Exceptions;
 using Robust.Shared.IoC;
 using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
@@ -11,7 +12,7 @@ using Robust.Shared.Utility;
 namespace Robust.Server.Console
 {
     /// <inheritdoc cref="IServerConsoleHost" />
-    internal class ServerConsoleHost : ConsoleHost, IServerConsoleHost
+    internal sealed class ServerConsoleHost : ConsoleHost, IServerConsoleHost
     {
         [Dependency] private readonly IConGroupController _groupController = default!;
         [Dependency] private readonly IPlayerManager _players = default!;
@@ -32,7 +33,7 @@ namespace Robust.Server.Console
             if (!NetManager.IsConnected || session is null)
                 return;
 
-            var msg = NetManager.CreateNetMessage<MsgConCmd>();
+            var msg = new MsgConCmd();
             msg.Text = command;
             NetManager.ServerSendMessage(msg, ((IPlayerSession)session).ConnectedClient);
         }
@@ -112,7 +113,7 @@ namespace Robust.Server.Console
             }
             catch (Exception e)
             {
-                LogManager.GetSawmill(SawmillName).Warning($"{FormatPlayerString(shell.Player)}: ExecuteError - {command}:\n{e}");
+                LogManager.GetSawmill(SawmillName).Error($"{FormatPlayerString(shell.Player)}: ExecuteError - {command}:\n{e}");
                 shell.WriteError($"There was an error while executing the command: {e}");
             }
         }
@@ -120,7 +121,7 @@ namespace Robust.Server.Console
         private void HandleRegistrationRequest(INetChannel senderConnection)
         {
             var netMgr = IoCManager.Resolve<IServerNetManager>();
-            var message = netMgr.CreateNetMessage<MsgConCmdReg>();
+            var message = new MsgConCmdReg();
 
             var counter = 0;
             message.Commands = new MsgConCmdReg.Command[RegisteredCommands.Count];
@@ -153,7 +154,7 @@ namespace Robust.Server.Console
         {
             if (session != null)
             {
-                var replyMsg = NetManager.CreateNetMessage<MsgConCmdAck>();
+                var replyMsg = new MsgConCmdAck();
                 replyMsg.Error = error;
                 replyMsg.Text = text;
                 NetManager.ServerSendMessage(replyMsg, session.ConnectedClient);

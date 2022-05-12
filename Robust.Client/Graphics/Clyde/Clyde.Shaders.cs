@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -34,7 +34,7 @@ namespace Robust.Client.Graphics.Clyde
 
         private readonly ConcurrentQueue<ClydeHandle> _deadShaderInstances = new();
 
-        private class LoadedShader
+        private sealed class LoadedShader
         {
             public GLShaderProgram Program = default!;
             public bool HasLighting = true;
@@ -42,7 +42,7 @@ namespace Robust.Client.Graphics.Clyde
             public string? Name;
         }
 
-        private class LoadedShaderInstance
+        private sealed class LoadedShaderInstance
         {
             public ClydeHandle ShaderHandle;
 
@@ -52,11 +52,11 @@ namespace Robust.Client.Graphics.Clyde
             public StencilParameters Stencil = StencilParameters.Default;
         }
 
-        public ClydeHandle LoadShader(ParsedShader shader, string? name = null)
+        public ClydeHandle LoadShader(ParsedShader shader, string? name = null, Dictionary<string,string>? defines = null)
         {
             var (vertBody, fragBody) = GetShaderCode(shader);
 
-            var program = _compileProgram(vertBody, fragBody, BaseShaderAttribLocations, name);
+            var program = _compileProgram(vertBody, fragBody, BaseShaderAttribLocations, name, defines: defines);
 
             if (_hasGLUniformBuffers)
             {
@@ -141,7 +141,7 @@ namespace Robust.Client.Graphics.Clyde
         }
 
         private GLShaderProgram _compileProgram(string vertexSource, string fragmentSource,
-            (string, uint)[] attribLocations, string? name = null, bool includeLib=true)
+            (string, uint)[] attribLocations, string? name = null, bool includeLib=true, Dictionary<string,string>? defines=null)
         {
             GLShader? vertexShader = null;
             GLShader? fragmentShader = null;
@@ -184,6 +184,14 @@ namespace Robust.Client.Graphics.Clyde
             if (_hasGLUniformBuffers)
             {
                 versionHeader += "#define HAS_UNIFORM_BUFFERS\n";
+            }
+
+            if (defines is not null)
+            {
+                foreach (var k in defines.Keys)
+                {
+                    versionHeader += $"#define {k} {defines[k]}\n";
+                }
             }
 
             var lib = includeLib ? _shaderLibrary : "";
@@ -387,7 +395,19 @@ namespace Robust.Client.Graphics.Clyde
                 data.Parameters[name] = value;
             }
 
+            private protected override void SetParameterImpl(string name, float[] value)
+            {
+                var data = Parent._shaderInstances[Handle];
+                data.Parameters[name] = value;
+            }
+
             private protected override void SetParameterImpl(string name, Vector2 value)
+            {
+                var data = Parent._shaderInstances[Handle];
+                data.Parameters[name] = value;
+            }
+
+            private protected override void SetParameterImpl(string name, Vector2[] value)
             {
                 var data = Parent._shaderInstances[Handle];
                 data.Parameters[name] = value;

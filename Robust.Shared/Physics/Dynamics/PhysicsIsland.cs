@@ -159,8 +159,6 @@ stored in a single array since multiple arrays lead to multiple misses.
         private float _maxAngularVelocity;
         private float _maxLinearCorrection;
         private float _maxAngularCorrection;
-        private float _linearSlop;
-        private float _angularSlop;
         private int _positionIterations;
         private bool _sleepAllowed;  // BONAFIDE MONAFIED
         private float _timeToSleep;
@@ -234,8 +232,6 @@ stored in a single array since multiple arrays lead to multiple misses.
             _positionIterations = cfg.PositionIterations;
             _sleepAllowed = cfg.SleepAllowed;
             _timeToSleep = cfg.TimeToSleep;
-            _linearSlop = cfg.LinearSlop;
-            _angularSlop = cfg.AngularSlop;
 
             _contactSolver.LoadConfig(cfg);
         }
@@ -337,7 +333,7 @@ stored in a single array since multiple arrays lead to multiple misses.
 
                 // Didn't use the old variable names because they're hard to read
                 var transform = _physicsManager.EnsureTransform(body);
-                var position = transform.Position;
+                var position = Transform.Mul(transform, body.LocalCenter);
                 // DebugTools.Assert(!float.IsNaN(position.X) && !float.IsNaN(position.Y));
                 var angle = transform.Quaternion2D.Angle;
 
@@ -373,8 +369,6 @@ stored in a single array since multiple arrays lead to multiple misses.
             SolverData.InvDt = invDt;
             SolverData.IslandIndex = ID;
             SolverData.WarmStarting = _warmStarting;
-            SolverData.LinearSlop = _linearSlop;
-            SolverData.AngularSlop = _angularSlop;
             SolverData.MaxLinearCorrection = _maxLinearCorrection;
             SolverData.MaxAngularCorrection = _maxAngularCorrection;
 
@@ -453,7 +447,6 @@ stored in a single array since multiple arrays lead to multiple misses.
 
                 _linearVelocities[i] = linearVelocity;
                 _angularVelocities[i] = angularVelocity;
-
                 _positions[i] = position;
                 _angles[i] = angle;
             }
@@ -467,12 +460,12 @@ stored in a single array since multiple arrays lead to multiple misses.
 
                 for (int j = 0; j < JointCount; ++j)
                 {
-                    Joint joint = _joints[j];
+                    var joint = _joints[j];
 
                     if (!joint.Enabled)
                         continue;
 
-                    bool jointOkay = joint.SolvePositionConstraints(SolverData);
+                    var jointOkay = joint.SolvePositionConstraints(SolverData);
 
                     jointsOkay = jointsOkay && jointOkay;
                 }
@@ -485,7 +478,7 @@ stored in a single array since multiple arrays lead to multiple misses.
             }
         }
 
-        internal void UpdateBodies(List<(ITransformComponent Transform, PhysicsComponent Body)> deferredUpdates)
+        internal void UpdateBodies(HashSet<TransformComponent> deferredUpdates)
         {
             foreach (var (joint, error) in _brokenJoints)
             {
@@ -497,6 +490,8 @@ stored in a single array since multiple arrays lead to multiple misses.
             }
 
             _brokenJoints.Clear();
+
+            var xforms = _entityManager.GetEntityQuery<TransformComponent>();
 
             // Update data on bodies by copying the buffers back
             for (var i = 0; i < BodyCount; i++)
@@ -516,11 +511,14 @@ stored in a single array since multiple arrays lead to multiple misses.
                 // Temporary NaN guards until PVS is fixed.
                 if (!float.IsNaN(bodyPos.X) && !float.IsNaN(bodyPos.Y))
                 {
+                    var q = new Quaternion2D(angle);
+
+                    bodyPos -= Transform.Mul(q, body.LocalCenter);
                     // body.Sweep.Center = bodyPos;
                     // body.Sweep.Angle = angle;
 
                     // DebugTools.Assert(!float.IsNaN(bodyPos.X) && !float.IsNaN(bodyPos.Y));
-                    var transform = body.Owner.Transform;
+                    var transform = xforms.GetComponent(body.Owner);
 
                     // Defer MoveEvent / RotateEvent until the end of the physics step so cache can be better.
                     transform.DeferUpdates = true;
@@ -532,7 +530,7 @@ stored in a single array since multiple arrays lead to multiple misses.
                     // changes then this is immediately invalidated.
                     if (transform.UpdatesDeferred)
                     {
-                        deferredUpdates.Add((transform, body));
+                        deferredUpdates.Add(transform);
                     }
                 }
 
@@ -543,9 +541,11 @@ stored in a single array since multiple arrays lead to multiple misses.
                     body.LinearVelocity = linVelocity;
                 }
 
-                if (!float.IsNaN(_angularVelocities[i]))
+                var angVelocity = _angularVelocities[i];
+
+                if (!float.IsNaN(angVelocity))
                 {
-                    body.AngularVelocity = _angularVelocities[i];
+                    body.AngularVelocity = angVelocity;
                 }
             }
         }

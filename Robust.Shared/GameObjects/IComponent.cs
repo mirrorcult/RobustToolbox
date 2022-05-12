@@ -20,11 +20,6 @@ namespace Robust.Shared.GameObjects
         string Name { get; }
 
         /// <summary>
-        ///     Whether the Owner has been paused.
-        /// </summary>
-        bool Paused { get; }
-
-        /// <summary>
         ///     The current lifetime stage of this component. You can use this to check
         ///     if the component is initialized or being deleted.
         /// </summary>
@@ -42,12 +37,7 @@ namespace Robust.Shared.GameObjects
         /// <summary>
         ///     Entity that this component is attached to.
         /// </summary>
-        IEntity Owner { get; }
-
-        /// <summary>
-        ///     Entity Uid that this component is attached to.
-        /// </summary>
-        EntityUid OwnerUid => Owner.Uid;
+        EntityUid Owner { get; }
 
         /// <summary>
         /// Component has been properly initialized.
@@ -67,7 +57,7 @@ namespace Robust.Shared.GameObjects
         /// <summary>
         ///     Marks the component as dirty so that the network will re-sync it with clients.
         /// </summary>
-        void Dirty();
+        void Dirty(IEntityManager? entManager = null);
 
         /// <summary>
         ///     This is the tick the component was created.
@@ -80,28 +70,10 @@ namespace Robust.Shared.GameObjects
         GameTick LastModifiedTick { get; }
 
         /// <summary>
-        ///     Handles a local incoming component message.
-        /// </summary>
-        /// <param name="message">Incoming event message.</param>
-        /// <param name="component">The local component that sent the message.</param>
-        [Obsolete("Component Messages are deprecated, use Entity Events instead.")]
-        void HandleMessage(ComponentMessage message, IComponent? component);
-
-        /// <summary>
-        ///     Handles an incoming component message from the server.
-        /// </summary>
-        /// <param name="message">Incoming event message.</param>
-        /// <param name="netChannel">The channel of the remote client that sent the message.</param>
-        /// <param name="session">The session data for the player who sent this message. Null if this is a client.</param>
-        [Obsolete("Component Messages are deprecated, use Entity Events instead.")]
-        void HandleNetworkMessage(ComponentMessage message, INetChannel netChannel, ICommonSession? session = null);
-
-        /// <summary>
         ///     Get the component's state for replicating on the client.
         /// </summary>
-        /// <param name="player"></param>
         /// <returns>ComponentState object</returns>
-        ComponentState GetComponentState(ICommonSession player);
+        ComponentState GetComponentState();
 
         /// <summary>
         ///     Handles an incoming component state from the server.

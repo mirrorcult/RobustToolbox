@@ -5,6 +5,7 @@ using Robust.Client.Debugging;
 using Robust.Client.GameObjects;
 using Robust.Client.GameStates;
 using Robust.Client.Graphics;
+using Robust.Client.Graphics.Audio;
 using Robust.Client.Graphics.Clyde;
 using Robust.Client.Input;
 using Robust.Client.Map;
@@ -42,11 +43,10 @@ namespace Robust.Client
             IoCManager.Register<IGameTiming, ClientGameTiming>();
             IoCManager.Register<IClientGameTiming, ClientGameTiming>();
             IoCManager.Register<IPrototypeManager, ClientPrototypeManager>();
-            IoCManager.Register<IMapManager, ClientMapManager>();
-            IoCManager.Register<IMapManagerInternal, ClientMapManager>();
-            IoCManager.Register<IClientMapManager, ClientMapManager>();
+            IoCManager.Register<IMapManager, NetworkedMapManager>();
+            IoCManager.Register<IMapManagerInternal, NetworkedMapManager>();
+            IoCManager.Register<INetworkedMapManager, NetworkedMapManager>();
             IoCManager.Register<IEntityManager, ClientEntityManager>();
-            IoCManager.Register<IEntityLookup, EntityLookup>();
             IoCManager.Register<IReflectionManager, ClientReflectionManager>();
             IoCManager.Register<IConsoleHost, ClientConsoleHost>();
             IoCManager.Register<IClientConsoleHost, ClientConsoleHost>();
@@ -71,7 +71,6 @@ namespace Robust.Client
             IoCManager.Register<IStateManager, StateManager>();
             IoCManager.Register<IUserInterfaceManager, UserInterfaceManager>();
             IoCManager.Register<IUserInterfaceManagerInternal, UserInterfaceManager>();
-            IoCManager.Register<IDebugDrawing, DebugDrawing>();
             IoCManager.Register<ILightManager, LightManager>();
             IoCManager.Register<IDiscordRichPresence, DiscordRichPresence>();
             IoCManager.Register<IMidiManager, MidiManager>();
@@ -82,8 +81,9 @@ namespace Robust.Client
                 case GameController.DisplayMode.Headless:
                     IoCManager.Register<IClyde, ClydeHeadless>();
                     IoCManager.Register<IClipboardManager, ClydeHeadless>();
-                    IoCManager.Register<IClydeAudio, ClydeHeadless>();
                     IoCManager.Register<IClydeInternal, ClydeHeadless>();
+                    IoCManager.Register<IClydeAudio, ClydeAudioHeadless>();
+                    IoCManager.Register<IClydeAudioInternal, ClydeAudioHeadless>();
                     IoCManager.Register<IInputManager, InputManager>();
                     IoCManager.Register<IFileDialogManager, DummyFileDialogManager>();
                     IoCManager.Register<IUriOpener, UriOpenerDummy>();
@@ -91,8 +91,9 @@ namespace Robust.Client
                 case GameController.DisplayMode.Clyde:
                     IoCManager.Register<IClyde, Clyde>();
                     IoCManager.Register<IClipboardManager, Clyde>();
-                    IoCManager.Register<IClydeAudio, Clyde>();
                     IoCManager.Register<IClydeInternal, Clyde>();
+                    IoCManager.Register<IClydeAudio, FallbackProxyClydeAudio>();
+                    IoCManager.Register<IClydeAudioInternal, FallbackProxyClydeAudio>();
                     IoCManager.Register<IInputManager, ClydeInputManager>();
                     IoCManager.Register<IFileDialogManager, FileDialogManager>();
                     IoCManager.Register<IUriOpener, UriOpener>();

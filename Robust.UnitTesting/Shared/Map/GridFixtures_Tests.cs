@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Robust.Shared.GameObjects;
@@ -11,7 +12,7 @@ namespace Robust.UnitTesting.Shared.Map
     /// Tests whether grid fixtures are being generated correctly.
     /// </summary>
     [TestFixture]
-    public class GridFixtures_Tests : RobustIntegrationTest
+    public sealed class GridFixtures_Tests : RobustIntegrationTest
     {
         [Test]
         public async Task TestGridFixtures()
@@ -29,30 +30,31 @@ namespace Robust.UnitTesting.Shared.Map
 
                 // Should be nothing if grid empty
                 Assert.That(entManager.TryGetComponent(grid.GridEntityId, out PhysicsComponent gridBody));
-                Assert.That(gridBody.Fixtures.Count, Is.EqualTo(0));
+                Assert.That(entManager.TryGetComponent(grid.GridEntityId, out FixturesComponent manager));
+                Assert.That(manager.FixtureCount, Is.EqualTo(0));
                 Assert.That(gridBody.BodyType, Is.EqualTo(BodyType.Static));
 
                 // 1 fixture if we only ever update the 1 chunk
                 grid.SetTile(Vector2i.Zero, new Tile(1));
 
-                Assert.That(gridBody.Fixtures.Count, Is.EqualTo(1));
+                Assert.That(manager.FixtureCount, Is.EqualTo(1));
                 // Also should only be a single tile.
-                var bounds = gridBody.Fixtures[0].Shape.ComputeAABB(new Transform(Vector2.Zero, (float) Angle.Zero.Theta), 0);
+                var bounds = manager.Fixtures.First().Value.Shape.ComputeAABB(new Transform(Vector2.Zero, (float) Angle.Zero.Theta), 0);
                 // Poly probably has Box2D's radius added to it so won't be a unit square
                 Assert.That(MathHelper.CloseToPercent(Box2.Area(bounds), 1.0f, 0.1f));
 
                 // Now do 2 tiles (same chunk)
-                grid.SetTile(Vector2i.One, new Tile(1));
+                grid.SetTile(new Vector2i(0, 1), new Tile(1));
 
-                Assert.That(gridBody.Fixtures.Count, Is.EqualTo(2));
-                bounds = gridBody.Fixtures[0].Shape.ComputeAABB(new Transform(Vector2.Zero, (float) Angle.Zero.Theta), 0);
+                Assert.That(manager.FixtureCount, Is.EqualTo(1));
+                bounds = manager.Fixtures.First().Value.Shape.ComputeAABB(new Transform(Vector2.Zero, (float) Angle.Zero.Theta), 0);
 
                 // Even if we add a new tile old fixture should stay the same if they don't connect.
-                Assert.That(MathHelper.CloseToPercent(Box2.Area(bounds), 1.0f, 0.1f));
+                Assert.That(MathHelper.CloseToPercent(Box2.Area(bounds), 2.0f, 0.1f));
 
-                // If we add a new chunk should be 3 now
-                grid.SetTile(new Vector2i(-1, -1), new Tile(1));
-                Assert.That(gridBody.Fixtures.Count, Is.EqualTo(3));
+                // If we add a new chunk should be 2 now
+                grid.SetTile(new Vector2i(0, -1), new Tile(1));
+                Assert.That(manager.FixtureCount, Is.EqualTo(2));
 
                 gridBody.LinearVelocity = Vector2.One;
                 Assert.That(gridBody.LinearVelocity.Length, Is.EqualTo(0f));

@@ -1,13 +1,14 @@
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Robust.Shared.GameObjects;
+using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using Robust.Shared.Physics;
 
 namespace Robust.UnitTesting.Shared.Map
 {
-    public class GridCollision_Test : RobustIntegrationTest
+    public sealed class GridCollision_Test : RobustIntegrationTest
     {
         [Test]
         public async Task TestGridsCollide()
@@ -24,18 +25,18 @@ namespace Robust.UnitTesting.Shared.Map
             IMapGrid? gridId2 = null;
             PhysicsComponent? physics1 = null;
             PhysicsComponent? physics2 = null;
-            IEntity? gridEnt1;
-            IEntity? gridEnt2;
+            EntityUid? gridEnt1;
+            EntityUid? gridEnt2;
 
             await server.WaitPost(() =>
             {
                 mapId = mapManager.CreateMap();
                 gridId1 = mapManager.CreateGrid(mapId);
                 gridId2 = mapManager.CreateGrid(mapId);
-                gridEnt1 = entManager.GetEntity(gridId1.GridEntityId);
-                gridEnt2 = entManager.GetEntity(gridId2.GridEntityId);
-                physics1 = gridEnt1.GetComponent<PhysicsComponent>();
-                physics2 = gridEnt2.GetComponent<PhysicsComponent>();
+                gridEnt1 = gridId1.GridEntityId;
+                gridEnt2 = gridId2.GridEntityId;
+                physics1 = IoCManager.Resolve<IEntityManager>().GetComponent<PhysicsComponent>(gridEnt1.Value);
+                physics2 = IoCManager.Resolve<IEntityManager>().GetComponent<PhysicsComponent>(gridEnt2.Value);
                 // Can't collide static bodies and grids (at time of this writing) start as static
                 // (given most other games would probably prefer them as static) hence we need to make them dynamic.
                 physics1.BodyType = BodyType.Dynamic;
@@ -47,12 +48,19 @@ namespace Robust.UnitTesting.Shared.Map
             // No tiles set hence should be no collision
             await server.WaitAssertion(() =>
             {
-                var edge = physics1?.ContactEdges;
+                var node = physics1?.Contacts.First;
 
-                while (edge != null)
+                while (node != null)
                 {
-                    Assert.That(edge.Other, Is.Not.EqualTo(physics2));
-                    edge = edge.Next;
+                    var contact = node.Value;
+                    node = node.Next;
+
+                    var bodyA = contact.FixtureA!.Body;
+                    var bodyB = contact.FixtureB!.Body;
+
+                    var other = physics1 == bodyA ? bodyB : bodyA;
+
+                    Assert.That(other, Is.Not.EqualTo(physics2));
                 }
             });
 
@@ -67,17 +75,23 @@ namespace Robust.UnitTesting.Shared.Map
             await server.WaitAssertion(() =>
             {
                 var colliding = false;
-                var edge = physics1?.ContactEdges;
+                var node = physics1?.Contacts.First;
 
-                while (edge != null)
+                while (node != null)
                 {
-                    if (edge.Other == physics2)
+                    var contact = node.Value;
+                    node = node.Next;
+
+                    var bodyA = contact.FixtureA!.Body;
+                    var bodyB = contact.FixtureB!.Body;
+
+                    var other = physics1 == bodyA ? bodyB : bodyA;
+
+                    if (other == physics2)
                     {
                         colliding = true;
                         break;
                     }
-
-                    edge = edge.Next;
                 }
 
                 Assert.That(colliding);

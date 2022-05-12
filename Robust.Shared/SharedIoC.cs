@@ -1,4 +1,4 @@
-﻿using Robust.Shared.Asynchronous;
+using Robust.Shared.Asynchronous;
 using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
 using Robust.Shared.Exceptions;
@@ -14,6 +14,7 @@ using Robust.Shared.Random;
 using Robust.Shared.Sandboxing;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
+using Robust.Shared.Threading;
 using Robust.Shared.Timing;
 
 namespace Robust.Shared
@@ -32,7 +33,7 @@ namespace Robust.Shared
             IoCManager.Register<ILocalizationManager, LocalizationManager>();
             IoCManager.Register<ILocalizationManagerInternal, LocalizationManager>();
             IoCManager.Register<ILogManager, LogManager>();
-            IoCManager.Register<IPauseManager, PauseManager>();
+            IoCManager.Register<IPauseManager, NetworkedMapManager>();
             IoCManager.Register<IModLoader, ModLoader>();
             IoCManager.Register<IModLoaderInternal, ModLoader>();
             IoCManager.Register<INetManager, NetManager>();
@@ -43,12 +44,12 @@ namespace Robust.Shared
             IoCManager.Register<ITimerManager, TimerManager>();
             IoCManager.Register<IRobustRandom, RobustRandom>();
             IoCManager.Register<IRobustMappedStringSerializer, RobustMappedStringSerializer>();
-            IoCManager.Register<IComponentDependencyManager, ComponentDependencyManager>();
             IoCManager.Register<ISandboxHelper, SandboxHelper>();
             IoCManager.Register<IManifoldManager, CollisionManager>();
             IoCManager.Register<IIslandManager, IslandManager>();
             IoCManager.Register<IVerticesSimplifier, RamerDouglasPeuckerSimplifier>();
-            IoCManager.Register<IShapeManager, ShapeManager>();
+            IoCManager.Register<IParallelManager, ParallelManager>();
+            IoCManager.Register<IParallelManagerInternal, ParallelManager>();
         }
     }
 }

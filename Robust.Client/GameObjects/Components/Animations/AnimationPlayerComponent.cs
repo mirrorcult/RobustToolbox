@@ -13,8 +13,6 @@ namespace Robust.Client.GameObjects
     {
         // TODO: Give this component a friend someday. Way too much content shit to change atm ._.
 
-        public override string Name => "AnimationPlayer";
-
         public int PlayingAnimationCount => PlayingAnimations.Count;
 
         internal readonly Dictionary<string, AnimationPlayback> PlayingAnimations
@@ -52,7 +50,9 @@ namespace Robust.Client.GameObjects
         /// </summary>
         internal void AnimationComplete(string key)
         {
+#pragma warning disable 618
             AnimationCompleted?.Invoke(key);
+#pragma warning restore 618
         }
 
         [Obsolete("Use AnimationCompletedEvent instead")]

@@ -5,7 +5,7 @@ using Robust.Shared.Network;
 
 namespace Robust.Client.Console.Commands
 {
-    class HelpCommand : IConsoleCommand
+    sealed class HelpCommand : IConsoleCommand
     {
         public string Command => "help";
         public string Help => "When no arguments are provided, displays a generic help text. When an argument is passed, display the help text for the command with that name.";
@@ -44,7 +44,7 @@ namespace Robust.Client.Console.Commands
         }
     }
 
-    class ListCommand : IConsoleCommand
+    sealed class ListCommand : IConsoleCommand
     {
         public string Command => "list";
         public string Help => "Usage: list [filter]\n" +
@@ -63,7 +63,7 @@ namespace Robust.Client.Console.Commands
 
             var conGroup = IoCManager.Resolve<IClientConGroupController>();
             foreach (var command in shell.ConsoleHost.RegisteredCommands.Values
-                .Where(p => p.Command.Contains(filter) && conGroup.CanCommand(p.Command))
+                .Where(p => p.Command.Contains(filter) && (p is not ServerDummyCommand || conGroup.CanCommand(p.Command)))
                 .OrderBy(c => c.Command))
             {
                 shell.WriteLine(command.Command + ": " + command.Description);

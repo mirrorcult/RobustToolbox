@@ -18,11 +18,10 @@ namespace Robust.Client.Player
     ///     Why not just attach the inputs directly? It's messy! This makes the whole thing nicely encapsulated.
     ///     This class also communicates with the server to let the server control what entity it is attached to.
     /// </summary>
-    public class PlayerManager : IPlayerManager
+    public sealed class PlayerManager : IPlayerManager
     {
         [Dependency] private readonly IClientNetManager _network = default!;
         [Dependency] private readonly IBaseClient _client = default!;
-        [Dependency] private readonly IEntityManager _entityManager = default!;
 
         /// <summary>
         ///     Active sessions of connected clients to the server.
@@ -90,7 +89,7 @@ namespace Robust.Client.Player
         {
             LocalPlayer = new LocalPlayer();
 
-            var msgList = _network.CreateNetMessage<MsgPlayerListReq>();
+            var msgList = new MsgPlayerListReq();
             // message is empty
             _network.ClientSendMessage(msgList);
         }
@@ -140,7 +139,7 @@ namespace Robust.Client.Player
         /// <param name="entity">AttachedEntity in the server session.</param>
         private void UpdateAttachedEntity(EntityUid? entity)
         {
-            if (LocalPlayer!.ControlledEntity?.Uid == entity)
+            if (LocalPlayer!.ControlledEntity == entity)
             {
                 return;
             }
@@ -151,7 +150,7 @@ namespace Robust.Client.Player
                 return;
             }
 
-            LocalPlayer.AttachEntity(_entityManager.GetEntity(entity.Value));
+            LocalPlayer.AttachEntity(entity.Value);
         }
 
         /// <summary>

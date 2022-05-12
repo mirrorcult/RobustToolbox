@@ -11,11 +11,6 @@ namespace Robust.Shared.Audio
     public static class SoundSystem
     {
         /// <summary>
-        /// Default max range at which the sound can be heard.
-        /// </summary>
-        public static int DefaultSoundRange => GetAudio()?.DefaultSoundRange ?? 0;
-
-        /// <summary>
         /// Used in the PAS to designate the physics collision mask of occluders.
         /// </summary>
         public static int OcclusionCollisionMask
@@ -55,18 +50,6 @@ namespace Robust.Shared.Audio
         /// </summary>
         /// <param name="playerFilter">The set of players that will hear the sound.</param>
         /// <param name="filename">The resource path to the OGG Vorbis file to play.</param>
-        /// <param name="entity">The entity "emitting" the audio.</param>
-        /// <param name="audioParams">Audio parameters to apply when playing the sound.</param>
-        public static IPlayingAudioStream? Play(Filter playerFilter, string filename, IEntity entity, AudioParams? audioParams = null)
-        {
-            return GetAudio()?.Play(playerFilter, filename, entity, audioParams);
-        }
-
-        /// <summary>
-        /// Play an audio file following an entity.
-        /// </summary>
-        /// <param name="playerFilter">The set of players that will hear the sound.</param>
-        /// <param name="filename">The resource path to the OGG Vorbis file to play.</param>
         /// <param name="uid">The UID of the entity "emitting" the audio.</param>
         /// <param name="audioParams">Audio parameters to apply when playing the sound.</param>
         public static IPlayingAudioStream? Play(Filter playerFilter, string filename, EntityUid uid, AudioParams? audioParams = null)
@@ -86,7 +69,7 @@ namespace Robust.Shared.Audio
             return GetAudio()?.Play(playerFilter, filename, coordinates, audioParams);
         }
 
-        internal class QueryAudioSystem : EntityEventArgs
+        internal sealed class QueryAudioSystem : EntityEventArgs
         {
             public IAudioSystem? Audio { get; set; }
         }

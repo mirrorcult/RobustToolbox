@@ -49,8 +49,6 @@ namespace Robust.Client.UserInterface.CustomControls
 
         private readonly ConcurrentQueue<FormattedMessage> _messageQueue = new();
 
-        public HistoryLineEdit CommandBarPub => CommandBar;
-
         private bool commandChanged = true;
         private readonly List<string> searchResults;
         private int searchIndex = 0;
@@ -315,13 +313,13 @@ namespace Robust.Client.UserInterface.CustomControls
 
             await Task.Run(async () =>
             {
-                Stream? stream = null;
+                StreamWriter? writer = null;
 
                 for (var i = 0; i < 3; i++)
                 {
                     try
                     {
-                        stream = _resourceManager.UserData.Create(HistoryPath);
+                        writer = _resourceManager.UserData.OpenWriteText(HistoryPath);
                         break;
                     }
                     catch (IOException)
@@ -331,16 +329,18 @@ namespace Robust.Client.UserInterface.CustomControls
                     }
                 }
 
-                if (stream == null)
+                if (writer == null)
                 {
                     sawmill.Warning("Failed to save debug console history!");
                     return;
                 }
 
                 // ReSharper disable once UseAwaitUsing
-                using var writer = new StreamWriter(stream, EncodingHelpers.UTF8);
-                // ReSharper disable once MethodHasAsyncOverload
-                writer.Write(newHistory);
+                using (writer)
+                {
+                    // ReSharper disable once MethodHasAsyncOverload
+                    writer.Write(newHistory);
+                }
             });
         }
     }

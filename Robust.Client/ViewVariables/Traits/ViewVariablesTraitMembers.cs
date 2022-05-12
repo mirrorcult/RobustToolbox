@@ -9,7 +9,7 @@ using static Robust.Client.UserInterface.Controls.BoxContainer;
 
 namespace Robust.Client.ViewVariables.Traits
 {
-    internal class ViewVariablesTraitMembers : ViewVariablesTrait
+    internal sealed class ViewVariablesTraitMembers : ViewVariablesTrait
     {
         private readonly IViewVariablesManagerInternal _vvm;
         private readonly IRobustSerializer _robustSerializer;
@@ -45,7 +45,7 @@ namespace Robust.Client.ViewVariables.Traits
                 {
                     CreateMemberGroupHeader(
                         ref first,
-                        TypeAbbreviation.Abbreviate(group.Key),
+                        PrettyPrint.PrintUserFacingTypeShort(group.Key, 2),
                         _memberList);
 
                     foreach (var control in group)

@@ -53,6 +53,9 @@ namespace Robust.Client.Console
             OutputPanel.AddText(">");
         }
 
+        // No-op for now.
+        protected override void Complete() { }
+
         protected override async void Run()
         {
             var code = InputBar.Text;
@@ -205,6 +208,23 @@ namespace Robust.Client.Console
             public override void vv(object a)
             {
                 vvm.OpenVV(a);
+            }
+
+            protected override void WriteSyntax(object toString)
+            {
+                var code = toString.ToString();
+
+                if (code == null)
+                    return;
+
+                var options = ScriptInstanceShared.GetScriptOptions(_owner._reflectionManager).AddReferences(typeof(Image).Assembly);
+                var script = CSharpScript.Create(code, options, typeof(ScriptGlobals));
+                script.Compile();
+
+                var syntax = new FormattedMessage();
+                ScriptInstanceShared.AddWithSyntaxHighlighting(script, syntax, code, _owner._highlightWorkspace);
+
+                _owner.OutputPanel.AddMessage(syntax);
             }
 
             public override void write(object toString)

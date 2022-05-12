@@ -54,13 +54,20 @@ namespace Robust.Shared.Console
 
         /// <summary>
         /// Registers a console command into the console system. This is an alternative to
-        /// creating an <see cref="IConsoleCommand" /> class.
+        /// creating an <see cref="IConsoleCommand"/> class.
         /// </summary>
         /// <param name="command">A string as identifier for this command.</param>
         /// <param name="description">Short one sentence description of the command.</param>
         /// <param name="help">Command format string.</param>
         /// <param name="callback"></param>
         void RegisterCommand(string command, string description, string help, ConCommandCallback callback);
+
+        /// <summary>
+        /// Unregisters a console command that has been registered previously with <see cref="RegisterCommand"/>.
+        /// If the specified command was registered automatically or isn't registered at all, the method will throw.
+        /// </summary>
+        /// <param name="command">The string identifier for the command.</param>
+        void UnregisterCommand(string command);
 
         /// <summary>
         /// Returns the console shell for a given active session.
@@ -74,10 +81,34 @@ namespace Robust.Shared.Console
         IConsoleShell GetSessionShell(ICommonSession session);
 
         /// <summary>
-        /// Execute a command string on the local shell.
+        /// Execute a command string immediately on the local shell, bypassing the command buffer completely.
         /// </summary>
         /// <param name="command">Command string to execute.</param>
         void ExecuteCommand(string command);
+
+        /// <summary>
+        /// Appends a command into the end of the command buffer on the local shell.
+        /// </summary>
+        /// <remarks>
+        ///  This command will be ran *sometime* in the future, depending on how many waits are in the buffer.
+        /// </remarks>
+        /// <param name="command">Command string to execute.</param>
+        void AppendCommand(string command);
+
+        /// <summary>
+        /// Inserts a command into the front of the command buffer on the local shell.
+        /// </summary>
+        /// <remarks>
+        ///  This command will preempt the next command executed in the command buffer.
+        /// </remarks>
+        /// <param name="command">Command string to execute.</param>
+        void InsertCommand(string command);
+
+        /// <summary>
+        /// Processes any contents of the command buffer on the local shell. This needs to be called regularly (once a tick),
+        /// inside the simulation. Pausing the server should prevent the buffer from being processed.
+        /// </summary>
+        void CommandBufferExecute();
 
         /// <summary>
         /// Executes a command string on this specific session shell. If the command does not exist, the command will be forwarded

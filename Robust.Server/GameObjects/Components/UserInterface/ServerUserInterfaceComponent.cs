@@ -6,9 +6,10 @@ using JetBrains.Annotations;
 using Robust.Server.Player;
 using Robust.Shared.Enums;
 using Robust.Shared.GameObjects;
-using Robust.Shared.Log;
+using Robust.Shared.IoC;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager.Attributes;
+using static Robust.Shared.GameObjects.SharedUserInterfaceComponent;
 
 namespace Robust.Server.GameObjects
 {
@@ -38,7 +39,7 @@ namespace Robust.Server.GameObjects
 
             foreach (var prototypeData in _interfaceData)
             {
-                _interfaces[prototypeData.UiKey] = new BoundUserInterface(prototypeData.UiKey, this);
+                _interfaces[prototypeData.UiKey] = new BoundUserInterface(prototypeData, this);
             }
         }
 
@@ -68,19 +69,7 @@ namespace Robust.Server.GameObjects
         internal void SendToSession(IPlayerSession session, BoundUserInterfaceMessage message, object uiKey)
         {
             EntitySystem.Get<UserInterfaceSystem>()
-                .SendTo(session, new BoundUIWrapMessage(Owner.Uid, message, uiKey));
-        }
-
-        internal void ReceiveMessage(IPlayerSession session, BoundUIWrapMessage msg)
-        {
-            if (!_interfaces.TryGetValue(msg.UiKey, out var @interface))
-            {
-                Logger.DebugS("go.comp.ui", "Got BoundInterfaceMessageWrapMessage for unknown UI key: {0}",
-                    msg.UiKey);
-                return;
-            }
-
-            @interface.ReceiveMessage(msg.Message, session);
+                .SendTo(session, new BoundUIWrapMessage(Owner, message, uiKey));
         }
     }
 
@@ -96,6 +85,7 @@ namespace Robust.Server.GameObjects
         public ServerUserInterfaceComponent Owner { get; }
         private readonly HashSet<IPlayerSession> _subscribedSessions = new();
         private BoundUserInterfaceState? _lastState;
+        public bool RequireInputValidation;
 
         private bool _stateDirty;
 
@@ -110,9 +100,10 @@ namespace Robust.Server.GameObjects
         public event Action<ServerBoundUserInterfaceMessage>? OnReceiveMessage;
         public event Action<IPlayerSession>? OnClosed;
 
-        public BoundUserInterface(object uiKey, ServerUserInterfaceComponent owner)
+        public BoundUserInterface(PrototypeData data, ServerUserInterfaceComponent owner)
         {
-            UiKey = uiKey;
+            RequireInputValidation = data.RequireInputValidation;
+            UiKey = data.UiKey;
             Owner = owner;
         }
 
@@ -193,6 +184,7 @@ namespace Robust.Server.GameObjects
             }
 
             _subscribedSessions.Add(session);
+            IoCManager.Resolve<IEntityManager>().EventBus.RaiseLocalEvent(Owner.Owner, new BoundUIOpenedEvent(UiKey, Owner.Owner, session));
             SendMessage(new OpenBoundInterfaceMessage(), session);
             if (_lastState != null)
             {
@@ -242,14 +234,14 @@ namespace Robust.Server.GameObjects
             return true;
         }
 
-        private void CloseShared(IPlayerSession session)
+        public void CloseShared(IPlayerSession session)
         {
             var owner = Owner.Owner;
-            owner.EntityManager.EventBus.RaiseLocalEvent(owner.Uid, new BoundUIClosedEvent(UiKey, owner.Uid, session));
             OnClosed?.Invoke(session);
             _subscribedSessions.Remove(session);
             _playerStateOverrides.Remove(session);
             session.PlayerStatusChanged -= OnSessionOnPlayerStatusChanged;
+            IoCManager.Resolve<IEntityManager>().EventBus.RaiseLocalEvent(owner, new BoundUIClosedEvent(UiKey, owner, session));
 
             if (_subscribedSessions.Count == 0)
             {
@@ -318,26 +310,9 @@ namespace Robust.Server.GameObjects
             Owner.SendToSession(session, message, UiKey);
         }
 
-        internal void ReceiveMessage(BoundUserInterfaceMessage wrappedMessage, IPlayerSession session)
+        internal void ReceiveMessage(ServerBoundUserInterfaceMessage message)
         {
-            if (!_subscribedSessions.Contains(session))
-            {
-                Logger.DebugS("go.comp.ui", "Got message from session not subscribed to us.");
-                return;
-            }
-
-            switch (wrappedMessage)
-            {
-                case CloseBoundInterfaceMessage _:
-                    CloseShared(session);
-
-                    break;
-
-                default:
-                    var serverMsg = new ServerBoundUserInterfaceMessage(wrappedMessage, session);
-                    OnReceiveMessage?.Invoke(serverMsg);
-                    break;
-            }
+            OnReceiveMessage?.Invoke(message);
         }
 
         private void AssertContains(IPlayerSession session)
@@ -373,7 +348,7 @@ namespace Robust.Server.GameObjects
     }
 
     [PublicAPI]
-    public class ServerBoundUserInterfaceMessage
+    public sealed class ServerBoundUserInterfaceMessage
     {
         public BoundUserInterfaceMessage Message { get; }
         public IPlayerSession Session { get; }

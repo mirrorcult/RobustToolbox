@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Runtime;
@@ -11,18 +10,17 @@ using Robust.Client.GameStates;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.Placement;
-using Robust.Client.Player;
 using Robust.Client.ResourceManagement;
 using Robust.Client.State;
 using Robust.Client.UserInterface;
 using Robust.Client.Utility;
 using Robust.Client.ViewVariables;
+using Robust.Client.WebViewHook;
 using Robust.LoaderApi;
 using Robust.Shared;
 using Robust.Shared.Asynchronous;
 using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
-using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
@@ -30,8 +28,10 @@ using Robust.Shared.Network;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
+using Robust.Shared.Threading;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
+using YamlDotNet.RepresentationModel;
 
 namespace Robust.Client
 {
@@ -50,7 +50,6 @@ namespace Robust.Client
         [Dependency] private readonly IClientConsoleHost _console = default!;
         [Dependency] private readonly ITimerManager _timerManager = default!;
         [Dependency] private readonly IClientEntityManager _entityManager = default!;
-        [Dependency] private readonly IEntityLookup _lookup = default!;
         [Dependency] private readonly IPlacementManager _placementManager = default!;
         [Dependency] private readonly IClientGameStateManager _gameStateManager = default!;
         [Dependency] private readonly IOverlayManagerInternal _overlayManager = default!;
@@ -59,6 +58,7 @@ namespace Robust.Client
         [Dependency] private readonly IViewVariablesManagerInternal _viewVariablesManager = default!;
         [Dependency] private readonly IDiscordRichPresence _discord = default!;
         [Dependency] private readonly IClydeInternal _clyde = default!;
+        [Dependency] private readonly IClydeAudioInternal _clydeAudio = default!;
         [Dependency] private readonly IFontManagerInternal _fontManager = default!;
         [Dependency] private readonly IModLoaderInternal _modLoader = default!;
         [Dependency] private readonly IScriptClient _scriptClient = default!;
@@ -66,6 +66,9 @@ namespace Robust.Client
         [Dependency] private readonly IAuthManager _authManager = default!;
         [Dependency] private readonly IMidiManager _midiManager = default!;
         [Dependency] private readonly IEyeManager _eyeManager = default!;
+        [Dependency] private readonly IParallelManagerInternal _parallelMgr = default!;
+
+        private IWebViewManagerHook? _webViewHook;
 
         private CommandLineArgs? _commandLineArgs;
 
@@ -76,6 +79,8 @@ namespace Robust.Client
         public GameControllerOptions Options { get; private set; } = new();
         public InitialLaunchState LaunchState { get; private set; } = default!;
 
+        private ResourceManifestData? _resourceManifest;
+
         public void SetCommandLineArgs(CommandLineArgs args)
         {
             _commandLineArgs = args;
@@ -83,18 +88,25 @@ namespace Robust.Client
 
         internal bool StartupContinue(DisplayMode displayMode)
         {
+            DebugTools.AssertNotNull(_resourceManifest);
+
             _clyde.InitializePostWindowing();
-            _clyde.SetWindowTitle(Options.DefaultWindowTitle);
+            _clydeAudio.InitializePostWindowing();
+            _clyde.SetWindowTitle(Options.DefaultWindowTitle ?? _resourceManifest!.DefaultWindowTitle ?? "RobustToolbox");
 
             _taskManager.Initialize();
-            _fontManager.SetFontDpi((uint) _configurationManager.GetCVar(CVars.DisplayFontDpi));
+            _fontManager.SetFontDpi((uint)_configurationManager.GetCVar(CVars.DisplayFontDpi));
+
+            // Load optional Robust modules.
+            LoadOptionalRobustModules(displayMode, _resourceManifest!);
 
             // Disable load context usage on content start.
             // This prevents Content.Client being loaded twice and things like csi blowing up because of it.
             _modLoader.SetUseLoadContext(!ContentStart);
             _modLoader.SetEnableSandboxing(Options.Sandboxing);
 
-            if (!_modLoader.TryLoadModulesFrom(Options.AssemblyDirectory, Options.ContentModulePrefix))
+            var assemblyPrefix = Options.ContentModulePrefix ?? _resourceManifest!.AssemblyPrefix ?? "Content.";
+            if (!_modLoader.TryLoadModulesFrom(Options.AssemblyDirectory, assemblyPrefix))
             {
                 Logger.Fatal("Errors while loading content assemblies.");
                 return false;
@@ -120,10 +132,11 @@ namespace Robust.Client
             _inputManager.Initialize();
             _console.Initialize();
             _prototypeManager.Initialize();
+            _prototypeManager.LoadDirectory(new ResourcePath("/EnginePrototypes/"));
             _prototypeManager.LoadDirectory(Options.PrototypeDirectory);
-            _prototypeManager.Resync();
-            _mapManager.Initialize();
+            _prototypeManager.ResolveResults();
             _entityManager.Initialize();
+            _mapManager.Initialize();
             _gameStateManager.Initialize();
             _placementManager.Initialize();
             _viewVariablesManager.Initialize();
@@ -193,7 +206,61 @@ namespace Robust.Client
                 _client.ConnectToServer(LaunchState.ConnectEndpoint);
             }
 
+            ProgramShared.RunExecCommands(_console, _commandLineArgs?.ExecCommands);
+
             return true;
+        }
+
+        private ResourceManifestData LoadResourceManifest()
+        {
+            // Parses /manifest.yml for game-specific settings that cannot be exclusively set up by content code.
+            if (!_resourceCache.TryContentFileRead("/manifest.yml", out var stream))
+                return new ResourceManifestData(Array.Empty<string>(), null, null, null, null);
+
+            var yamlStream = new YamlStream();
+            using (stream)
+            {
+                using var streamReader = new StreamReader(stream, EncodingHelpers.UTF8);
+                yamlStream.Load(streamReader);
+            }
+
+            if (yamlStream.Documents.Count == 0)
+                return new ResourceManifestData(Array.Empty<string>(), null, null, null, null);
+
+            if (yamlStream.Documents.Count != 1 || yamlStream.Documents[0].RootNode is not YamlMappingNode mapping)
+            {
+                throw new InvalidOperationException(
+                    "Expected a single YAML document with root mapping for /manifest.yml");
+            }
+
+            var modules = Array.Empty<string>();
+            if (mapping.TryGetNode("modules", out var modulesMap))
+            {
+                var sequence = (YamlSequenceNode)modulesMap;
+                modules = new string[sequence.Children.Count];
+                for (var i = 0; i < modules.Length; i++)
+                {
+                    modules[i] = sequence[i].AsString();
+                }
+            }
+
+            string? assemblyPrefix = null;
+            if (mapping.TryGetNode("assemblyPrefix", out var prefixNode))
+                assemblyPrefix = prefixNode.AsString();
+
+            string? defaultWindowTitle = null;
+            if (mapping.TryGetNode("defaultWindowTitle", out var winTitleNode))
+                defaultWindowTitle = winTitleNode.AsString();
+
+            string? windowIconSet = null;
+            if (mapping.TryGetNode("windowIconSet", out var iconSetNode))
+                windowIconSet = iconSetNode.AsString();
+
+            string? splashLogo = null;
+            if (mapping.TryGetNode("splashLogo", out var splashNode))
+                splashLogo = splashNode.AsString();
+
+            return new ResourceManifestData(modules, assemblyPrefix, defaultWindowTitle, windowIconSet, splashLogo);
         }
 
         internal bool StartupSystemSplash(GameControllerOptions options, Func<ILogHandler>? logHandlerFactory)
@@ -217,8 +284,10 @@ namespace Robust.Client
                             System.Console.WriteLine($"LogLevel {level} does not exist!");
                             continue;
                         }
+
                         logLevel = result;
                     }
+
                     _logManager.GetSawmill(sawmill).Level = logLevel;
                 }
             }
@@ -257,30 +326,46 @@ namespace Robust.Client
                 _configurationManager.OverrideConVars(_commandLineArgs.CVars);
             }
 
-            {
-                // Handle GameControllerOptions implicit CVar overrides.
-                _configurationManager.OverrideConVars(new []
-                {
-                    (CVars.DisplayWindowIconSet.Name, options.WindowIconSet.ToString()),
-                    (CVars.DisplaySplashLogo.Name, options.SplashLogo.ToString())
-                });
-            }
-
             ProfileOptSetup.Setup(_configurationManager);
+
+            _parallelMgr.Initialize();
 
             _resourceCache.Initialize(Options.LoadConfigAndUserData ? userDataDir : null);
 
             var mountOptions = _commandLineArgs != null
-                ? MountOptions.Merge(_commandLineArgs.MountOptions, Options.MountOptions) : Options.MountOptions;
+                ? MountOptions.Merge(_commandLineArgs.MountOptions, Options.MountOptions)
+                : Options.MountOptions;
 
-            ProgramShared.DoMounts(_resourceCache, mountOptions, Options.ContentBuildDirectory, Options.AssemblyDirectory,
+            ProgramShared.DoMounts(_resourceCache, mountOptions, Options.ContentBuildDirectory,
+                Options.AssemblyDirectory,
                 Options.LoadContentResources, _loaderArgs != null && !Options.ResourceMountDisabled, ContentStart);
 
             if (_loaderArgs != null)
             {
+                if (_loaderArgs.ApiMounts is { } mounts)
+                {
+                    foreach (var (api, prefix) in mounts)
+                    {
+                        _resourceCache.MountLoaderApi(api, "", new ResourcePath(prefix));
+                    }
+                }
+
                 _stringSerializer.EnableCaching = false;
                 _resourceCache.MountLoaderApi(_loaderArgs.FileApi, "Resources/");
                 _modLoader.VerifierExtraLoadHandler = VerifierExtraLoadHandler;
+            }
+
+            _resourceManifest = LoadResourceManifest();
+
+            {
+                // Handle GameControllerOptions implicit CVar overrides.
+                _configurationManager.OverrideConVars(new[]
+                {
+                    (CVars.DisplayWindowIconSet.Name,
+                        options.WindowIconSet?.ToString() ?? _resourceManifest.WindowIconSet ?? ""),
+                    (CVars.DisplaySplashLogo.Name,
+                        options.SplashLogo?.ToString() ?? _resourceManifest.SplashLogo ?? "")
+                });
             }
 
             _clyde.TextEntered += TextEntered;
@@ -373,6 +458,7 @@ namespace Robust.Client
         private void Tick(FrameEventArgs frameEventArgs)
         {
             _modLoader.BroadcastUpdate(ModUpdateLevel.PreEngine, frameEventArgs);
+            _console.CommandBufferExecute();
             _timerManager.UpdateTimers(frameEventArgs);
             _taskManager.ProcessPendingTasks();
 
@@ -385,8 +471,9 @@ namespace Robust.Client
             // In singleplayer, however, we're in full control instead.
             else if (_client.RunLevel == ClientRunLevel.SinglePlayerGame)
             {
-                _entityManager.TickUpdate(frameEventArgs.DeltaSeconds);
-                _lookup.Update();
+                // The last real tick is the current tick! This way we won't be in "prediction" mode.
+                _gameTiming.LastRealTick = _gameTiming.CurTick;
+                _entityManager.TickUpdate(frameEventArgs.DeltaSeconds, noPredictions: false);
             }
 
             _modLoader.BroadcastUpdate(ModUpdateLevel.PostEngine, frameEventArgs);
@@ -394,6 +481,8 @@ namespace Robust.Client
 
         private void Update(FrameEventArgs frameEventArgs)
         {
+            _webViewHook?.Update();
+            _clydeAudio.FrameProcess(frameEventArgs);
             _clyde.FrameProcess(frameEventArgs);
             _modLoader.BroadcastUpdate(ModUpdateLevel.FramePreEngine, frameEventArgs);
             _stateManager.FrameUpdate(frameEventArgs);
@@ -424,7 +513,7 @@ namespace Robust.Client
             logManager.GetSawmill("discord").Level = LogLevel.Warning;
             logManager.GetSawmill("net.predict").Level = LogLevel.Info;
             logManager.GetSawmill("szr").Level = LogLevel.Info;
-            logManager.GetSawmill("loc").Level = LogLevel.Error;
+            logManager.GetSawmill("loc").Level = LogLevel.Warning;
 
 #if DEBUG_ONLY_FCE_INFO
 #if DEBUG_ONLY_FCE_LOG
@@ -442,7 +531,7 @@ namespace Robust.Client
             var uh = logManager.GetSawmill("unhandled");
             AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
             {
-                var message = ((Exception) args.ExceptionObject).ToString();
+                var message = ((Exception)args.ExceptionObject).ToString();
                 uh.Log(args.IsTerminating ? LogLevel.Fatal : LogLevel.Error, message);
             };
 
@@ -485,11 +574,21 @@ namespace Robust.Client
         {
             _modLoader.Shutdown();
 
+            _webViewHook?.Shutdown();
+
             _networkManager.Shutdown("Client shutting down");
             _midiManager.Shutdown();
-            IoCManager.Resolve<IEntityLookup>().Shutdown();
             _entityManager.Shutdown();
             _clyde.Shutdown();
+            _clydeAudio.Shutdown();
         }
+
+        private sealed record ResourceManifestData(
+            string[] Modules,
+            string? AssemblyPrefix,
+            string? DefaultWindowTitle,
+            string? WindowIconSet,
+            string? SplashLogo
+        );
     }
 }

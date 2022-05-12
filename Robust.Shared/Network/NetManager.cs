@@ -18,6 +18,7 @@ using Robust.Shared.Serialization;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
+using SpaceWizards.Sodium;
 
 namespace Robust.Shared.Network
 {
@@ -36,9 +37,9 @@ namespace Robust.Shared.Network
     /// <summary>
     ///     Manages all network connections and packet IO.
     /// </summary>
-    public partial class NetManager : IClientNetManager, IServerNetManager
+    public sealed partial class NetManager : IClientNetManager, IServerNetManager
     {
-        internal const int AesKeyLength = 32;
+        internal const int SharedKeyLength = CryptoAeadXChaCha20Poly1305Ietf.KeyBytes; // 32 bytes
 
         [Dependency] private readonly IRobustSerializer _serializer = default!;
 
@@ -104,10 +105,6 @@ namespace Robust.Shared.Network
 
         // Used for processing incoming net messages.
         private readonly NetMsgEntry[] _netMsgFunctions = new NetMsgEntry[256];
-
-        // Used for processing outgoing net messages.
-        private readonly Dictionary<Type, Func<NetMessage>> _blankNetMsgFunctions =
-            new();
 
         private readonly Dictionary<Type, long> _bandwidthUsage = new();
 
@@ -249,29 +246,35 @@ namespace Robust.Shared.Network
             _config.OnValueChanged(CVars.NetVerbose, NetVerboseChanged);
             if (isServer)
             {
-                _config.OnValueChanged(CVars.AuthMode, i => Auth = (AuthMode) i, invokeImmediately: true);
+                _config.OnValueChanged(CVars.AuthMode, OnAuthModeChanged, invokeImmediately: true);
             }
-#if DEBUG
+
             _config.OnValueChanged(CVars.NetFakeLoss, _fakeLossChanged);
             _config.OnValueChanged(CVars.NetFakeLagMin, _fakeLagMinChanged);
             _config.OnValueChanged(CVars.NetFakeLagRand, _fakeLagRandomChanged);
             _config.OnValueChanged(CVars.NetFakeDuplicates, FakeDuplicatesChanged);
-#endif
 
             _strings.Initialize(() => { Logger.InfoS("net", "Message string table loaded."); },
                 UpdateNetMessageFunctions);
-            _serializer.ClientHandshakeComplete += () =>
-            {
-                Logger.InfoS("net", "Client completed serializer handshake.");
-                OnConnected(ServerChannelImpl!);
-            };
+            _serializer.ClientHandshakeComplete += OnSerializerOnClientHandshakeComplete;
 
             _initialized = true;
 
             if (IsServer)
             {
-                SAGenerateRsaKeys();
+                SAGenerateKeys();
             }
+        }
+
+        private void OnAuthModeChanged(int mode)
+        {
+            Auth = (AuthMode)mode;
+        }
+
+        private void OnSerializerOnClientHandshakeComplete()
+        {
+            Logger.InfoS("net", "Client completed serializer handshake.");
+            OnConnected(ServerChannelImpl!);
         }
 
         private void SynchronizeNetTime()
@@ -323,6 +326,7 @@ namespace Robust.Shared.Network
 
             var foundIpv6 = false;
 
+            var upnp = _config.GetCVar(CVars.NetUPnP);
             foreach (var bindAddress in binds)
             {
                 if (!IPAddress.TryParse(bindAddress.Trim(), out var address))
@@ -342,6 +346,9 @@ namespace Robust.Shared.Network
                     config.DualStack = true;
                 }
 
+                if (UpnpCompatible(config) && upnp)
+                    config.EnableUPnP = true;
+
                 var peer = IsServer ? (NetPeer) new NetServer(config) : new NetClient(config);
                 peer.Start();
                 _netPeers.Add(new NetPeerData(peer));
@@ -358,13 +365,17 @@ namespace Robust.Shared.Network
                 Logger.WarningS("net",
                     "IPv6 Dual Stack is enabled but no IPv6 addresses have been bound to. This will not work.");
             }
+
+            if (upnp)
+                InitUpnp();
         }
 
-        /// <inheritdoc />
-        public void Shutdown(string reason)
+        public void Reset(string reason)
         {
             foreach (var kvChannel in _channels)
+            {
                 DisconnectChannel(kvChannel.Value, reason);
+            }
 
             // request shutdown of the netPeer
             _netPeers.ForEach(p => p.Peer.Shutdown(reason));
@@ -383,12 +394,42 @@ namespace Robust.Shared.Network
 
             // Clear cached message functions.
             Array.Clear(_netMsgFunctions, 0, _netMsgFunctions.Length);
+
             // Clear string table.
             // This has to be done AFTER clearing _netMsgFunctions so that it re-initializes NetMsg 0.
             _strings.Reset();
 
             _cancelConnectTokenSource?.Cancel();
             ClientConnectState = ClientConnectionState.NotConnecting;
+        }
+
+        /// <inheritdoc />
+        public void Shutdown(string reason)
+        {
+            Reset(reason);
+
+            _messages.Clear();
+
+            _config.UnsubValueChanged(CVars.NetVerbose, NetVerboseChanged);
+            if (IsServer)
+            {
+                _config.UnsubValueChanged(CVars.AuthMode, OnAuthModeChanged);
+            }
+
+            _config.UnsubValueChanged(CVars.NetFakeLoss, _fakeLossChanged);
+            _config.UnsubValueChanged(CVars.NetFakeLagMin, _fakeLagMinChanged);
+            _config.UnsubValueChanged(CVars.NetFakeLagRand, _fakeLagRandomChanged);
+            _config.UnsubValueChanged(CVars.NetFakeDuplicates, FakeDuplicatesChanged);
+
+            _serializer.ClientHandshakeComplete -= OnSerializerOnClientHandshakeComplete;
+
+            ConnectFailed = null;
+            Connected = null;
+            Disconnect = null;
+            _connectingEvent.Clear();
+
+
+            _initialized = false;
         }
 
         public void ProcessPackets()
@@ -516,12 +557,12 @@ namespace Robust.Shared.Network
                 Disconnect?.Invoke(this, new NetDisconnectedArgs(ServerChannel, reason));
             }
 
-            Shutdown(reason);
+            Reset(reason);
         }
 
         private NetPeerConfiguration _getBaseNetPeerConfig()
         {
-            var netConfig = new NetPeerConfiguration("SS14_NetTag");
+            var netConfig = new NetPeerConfiguration(_config.GetCVar(CVars.NetLidgrenAppIdentifier));
 
             // ping the client once per second.
             netConfig.PingInterval = 1f;
@@ -538,9 +579,14 @@ namespace Robust.Shared.Network
                 netConfig.SetMessageTypeEnabled(NetIncomingMessageType.ConnectionApproval, true);
                 netConfig.MaximumConnections = _config.GetCVar(CVars.GameMaxPlayers);
             }
+            else
+            {
+                netConfig.ConnectionTimeout = _config.GetCVar(CVars.ConnectionTimeout);
+                netConfig.ResendHandshakeInterval = _config.GetCVar(CVars.ResendHandshakeInterval);
+                netConfig.MaximumHandshakeAttempts = _config.GetCVar(CVars.MaximumHandshakeAttempts);
+            }
 
 
-#if DEBUG
             //Simulate Latency
             netConfig.SimulatedLoss = _config.GetCVar(CVars.NetFakeLoss);
             netConfig.SimulatedMinimumLatency = _config.GetCVar(CVars.NetFakeLagMin);
@@ -548,11 +594,10 @@ namespace Robust.Shared.Network
             netConfig.SimulatedDuplicatesChance = _config.GetCVar(CVars.NetFakeDuplicates);
 
             netConfig.ConnectionTimeout = 30000f;
-#endif
+
             return netConfig;
         }
 
-#if DEBUG
         private void _fakeLossChanged(float newValue)
         {
             foreach (var peer in _netPeers)
@@ -584,7 +629,6 @@ namespace Robust.Shared.Network
                 peer.Peer.Configuration.SimulatedDuplicatesChance = newValue;
             }
         }
-#endif
 
         /// <summary>
         ///     Gets the NetChannel of a peer NetConnection.
@@ -786,10 +830,7 @@ namespace Robust.Shared.Network
 
             var encryption = IsServer ? channel.Encryption : _clientEncryption;
 
-            if (encryption != null)
-            {
-                msg.Decrypt(encryption);
-            }
+            encryption?.Decrypt(msg);
 
             var id = msg.ReadByte();
 
@@ -938,45 +979,13 @@ namespace Robust.Shared.Network
                     CacheNetMsgFunction((byte) id);
                 }
             }
-
-            // This means we *will* be caching creation delegates for messages that are never sent (by this side).
-            // But it means the caching logic isn't behind a TryGetValue in CreateNetMessage<T>,
-            // so it no thread safety crap.
-            CacheBlankFunction(typeof(T));
         }
 
         /// <inheritdoc />
         public T CreateNetMessage<T>()
-            where T : NetMessage
+            where T : NetMessage, new()
         {
-            return (T) _blankNetMsgFunctions[typeof(T)]();
-        }
-
-        private void CacheBlankFunction(Type type)
-        {
-            var dynamicMethod = new DynamicMethod($"_netMsg<>{type.Name}", typeof(NetMessage), Array.Empty<Type>(),
-                type, false);
-            var gen = dynamicMethod.GetILGenerator().GetRobustGen();
-
-            // Obsolete path for content
-            if (type.GetConstructor(new[] {typeof(INetChannel)}) is { } constructor)
-            {
-                gen.Emit(OpCodes.Ldnull);
-                gen.Emit(OpCodes.Newobj, constructor);
-                gen.Emit(OpCodes.Ret);
-            }
-            else
-            {
-                constructor = type.GetConstructor(Type.EmptyTypes)!;
-                DebugTools.AssertNotNull(constructor);
-
-                gen.Emit(OpCodes.Newobj, constructor);
-                gen.Emit(OpCodes.Ret);
-            }
-
-            var @delegate = (Func<NetMessage>) dynamicMethod.CreateDelegate(typeof(Func<NetMessage>));
-
-            _blankNetMsgFunctions.Add(type, @delegate);
+            return new T();
         }
 
         private NetOutgoingMessage BuildMessage(NetMessage message, NetPeer peer)
@@ -1018,10 +1027,8 @@ namespace Robust.Shared.Network
 
             var peer = channel.Connection.Peer;
             var packet = BuildMessage(message, peer);
-            if (channel.Encryption != null)
-            {
-                packet.Encrypt(channel.Encryption);
-            }
+
+            channel.Encryption?.Encrypt(packet);
 
             var method = message.DeliveryMethod;
             peer.SendMessage(packet, channel.Connection, method);
@@ -1061,10 +1068,8 @@ namespace Robust.Shared.Network
             var peer = _netPeers[0];
             var packet = BuildMessage(message, peer.Peer);
             var method = message.DeliveryMethod;
-            if (_clientEncryption != null)
-            {
-                packet.Encrypt(_clientEncryption);
-            }
+
+            _clientEncryption?.Encrypt(packet);
 
             peer.Peer.SendMessage(packet, peer.ConnectionsWithChannels[0], method);
             LogSend(message, method, packet);
@@ -1128,6 +1133,7 @@ namespace Robust.Shared.Network
         #endregion Events
 
         [Serializable]
+        [Virtual]
         public class ClientDisconnectedException : Exception
         {
             public ClientDisconnectedException()
@@ -1149,7 +1155,7 @@ namespace Robust.Shared.Network
             }
         }
 
-        private class NetPeerData
+        private sealed class NetPeerData
         {
             public readonly NetPeer Peer;
 
@@ -1187,6 +1193,7 @@ namespace Robust.Shared.Network
     /// <summary>
     ///     Generic exception thrown by the NetManager class.
     /// </summary>
+    [Virtual]
     public class NetManagerException : Exception
     {
         public NetManagerException(string message)

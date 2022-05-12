@@ -5,16 +5,16 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Mime;
+using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Lidgren.Network;
-using Newtonsoft.Json;
 using Robust.Shared.Log;
 using Robust.Shared.Network.Messages.Handshake;
 using Robust.Shared.Utility;
+using SpaceWizards.Sodium;
 
 namespace Robust.Shared.Network
 {
@@ -122,6 +122,7 @@ namespace Robust.Shared.Network
         private async Task CCDoHandshake(NetPeerData peer, NetConnection connection, string userNameRequest,
             CancellationToken cancel)
         {
+            var encrypt = _config.GetCVar(CVars.NetEncrypt);
             var authToken = _authManager.Token;
             var pubKey = _authManager.PubKey;
             var authServer = _authManager.Server;
@@ -136,7 +137,8 @@ namespace Robust.Shared.Network
                 UserName = userNameRequest,
                 CanAuth = authenticate,
                 NeedPubKey = !hasPubKey,
-                HWId = hwId
+                HWId = hwId,
+                Encrypt = encrypt
             };
 
             var outLoginMsg = peer.Peer.CreateMessage();
@@ -153,10 +155,11 @@ namespace Robust.Shared.Network
                 var encRequest = new MsgEncryptionRequest();
                 encRequest.ReadFromBuffer(response);
 
-                var sharedSecret = new byte[AesKeyLength];
+                var sharedSecret = new byte[SharedKeyLength];
                 RandomNumberGenerator.Fill(sharedSecret);
 
-                encryption = new NetAESEncryption(peer.Peer, sharedSecret, 0, sharedSecret.Length);
+                if (encrypt)
+                    encryption = new NetEncryption(sharedSecret, isServer: false);
 
                 byte[] keyBytes;
                 if (hasPubKey)
@@ -170,28 +173,32 @@ namespace Robust.Shared.Network
                     keyBytes = encRequest.PublicKey;
                 }
 
-                var rsaKey = RSA.Create();
-                rsaKey.ImportRSAPublicKey(keyBytes, out _);
+                if (keyBytes.Length != CryptoBox.PublicKeyBytes)
+                {
+                    connection.Disconnect("Invalid public key length");
+                    return;
+                }
 
-                var encryptedSecret = rsaKey.Encrypt(sharedSecret, RSAEncryptionPadding.OaepSHA256);
-                var encryptedVerifyToken = rsaKey.Encrypt(encRequest.VerifyToken, RSAEncryptionPadding.OaepSHA256);
+                // Data is [shared]+[verify]
+                var data = new byte[sharedSecret.Length + encRequest.VerifyToken.Length];
+                sharedSecret.CopyTo(data.AsSpan());
+                encRequest.VerifyToken.CopyTo(data.AsSpan(sharedSecret.Length));
+
+                var sealedData = CryptoBox.Seal(data, keyBytes);
 
                 var authHashBytes = MakeAuthHash(sharedSecret, keyBytes);
                 var authHash = Convert.ToBase64String(authHashBytes);
 
-                var joinReq = new JoinRequest {Hash = authHash};
+                var joinReq = new JoinRequest(authHash);
                 var httpClient = new HttpClient();
                 httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("SS14Auth", authToken);
-                var joinJson = JsonConvert.SerializeObject(joinReq);
-                var joinResp = await httpClient.PostAsync(authServer + "api/session/join",
-                    new StringContent(joinJson, EncodingHelpers.UTF8, MediaTypeNames.Application.Json), cancel);
+                var joinResp = await httpClient.PostAsJsonAsync(authServer + "api/session/join", joinReq, cancel);
 
                 joinResp.EnsureSuccessStatusCode();
 
                 var encryptionResponse = new MsgEncryptionResponse
                 {
-                    SharedSecret = encryptedSecret,
-                    VerifyToken = encryptedVerifyToken,
+                    SealedData = sealedData,
                     UserId = userId!.Value.UserId
                 };
 
@@ -201,7 +208,7 @@ namespace Robust.Shared.Network
 
                 // Expect login success here.
                 response = await AwaitData(connection, cancel);
-                encryption.Decrypt(response);
+                encryption?.Decrypt(response);
             }
 
             var msgSuc = new MsgLoginSuccess();
@@ -508,9 +515,6 @@ namespace Robust.Shared.Network
             }
         }
 
-        private sealed class JoinRequest
-        {
-            public string Hash = default!;
-        }
+        private sealed record JoinRequest(string Hash);
     }
 }

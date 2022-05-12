@@ -1,15 +1,16 @@
+using Robust.Server.Bql;
 using Robust.Server.Console;
 using Robust.Server.DataMetrics;
 using Robust.Server.Debugging;
 using Robust.Server.GameObjects;
 using Robust.Server.GameStates;
-using Robust.Server.Map;
 using Robust.Server.Maps;
 using Robust.Server.Placement;
 using Robust.Server.Player;
 using Robust.Server.Prototypes;
 using Robust.Server.Reflection;
 using Robust.Server.Scripting;
+using Robust.Server.ServerHub;
 using Robust.Server.ServerStatus;
 using Robust.Server.ViewVariables;
 using Robust.Shared;
@@ -45,11 +46,10 @@ namespace Robust.Server
             IoCManager.Register<IServerConsoleHost, ServerConsoleHost>();
             IoCManager.Register<IComponentFactory, ServerComponentFactory>();
             IoCManager.Register<IConGroupController, ConGroupController>();
-            IoCManager.Register<IMapManager, ServerMapManager>();
-            IoCManager.Register<IMapManagerInternal, ServerMapManager>();
-            IoCManager.Register<IServerMapManager, ServerMapManager>();
+            IoCManager.Register<IMapManager, NetworkedMapManager>();
+            IoCManager.Register<IMapManagerInternal, NetworkedMapManager>();
+            IoCManager.Register<INetworkedMapManager, NetworkedMapManager>();
             IoCManager.Register<IEntityManager, ServerEntityManager>();
-            IoCManager.Register<IEntityLookup, EntityLookup>();
             IoCManager.Register<IEntityNetworkManager, ServerEntityManager>();
             IoCManager.Register<IServerEntityNetworkManager, ServerEntityManager>();
             IoCManager.Register<IMapLoader, MapLoader>();
@@ -73,6 +73,8 @@ namespace Robust.Server
             IoCManager.Register<IMetricsManager, MetricsManager>();
             IoCManager.Register<IAuthManager, AuthManager>();
             IoCManager.Register<IPhysicsManager, PhysicsManager>();
+            IoCManager.Register<IBqlQueryManager, BqlQueryManager>();
+            IoCManager.Register<HubManager, HubManager>();
         }
     }
 }

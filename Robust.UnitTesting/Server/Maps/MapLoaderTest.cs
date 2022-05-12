@@ -1,5 +1,4 @@
 using System.Linq;
-using Moq;
 using NUnit.Framework;
 using Robust.Server.GameObjects;
 using Robust.Server.Maps;
@@ -17,7 +16,7 @@ using Robust.Shared.Utility;
 namespace Robust.UnitTesting.Server.Maps
 {
     [TestFixture]
-    public class MapLoaderTest : RobustUnitTest
+    public sealed class MapLoaderTest : RobustUnitTest
     {
         private const string MapData = @"
 meta:
@@ -58,40 +57,31 @@ entities:
 
 ";
 
-        protected override void OverrideIoC()
-        {
-            base.OverrideIoC();
-            //var mockFormat = new Mock<ICustomFormatManager>();
-            var mock = new Mock<IEntitySystemManager>();
-            var broady = new BroadPhaseSystem();
-            var physics = new PhysicsSystem();
-            var gridFixtures = new GridFixtureSystem();
-            mock.Setup(m => m.GetEntitySystem<SharedBroadphaseSystem>()).Returns(broady);
-            mock.Setup(m => m.GetEntitySystem<SharedPhysicsSystem>()).Returns(physics);
-            mock.Setup(m => m.GetEntitySystem<GridFixtureSystem>()).Returns(gridFixtures);
-
-            IoCManager.RegisterInstance<IEntitySystemManager>(mock.Object, true);
-            //IoCManager.RegisterInstance<ICustomFormatManager>(mockFormat.Object, true);
-        }
-
-
         [OneTimeSetUp]
         public void Setup()
         {
+            // For some reason RobustUnitTest doesn't discover PVSSystem but this does here so ?
+            var syssy = IoCManager.Resolve<IEntitySystemManager>();
+            syssy.Shutdown();
+            syssy.Initialize();
+
             var compFactory = IoCManager.Resolve<IComponentFactory>();
             compFactory.RegisterClass<MapDeserializeTestComponent>();
+            compFactory.RegisterClass<VisibilityComponent>();
             compFactory.GenerateNetIds();
             IoCManager.Resolve<ISerializationManager>().Initialize();
 
             var resourceManager = IoCManager.Resolve<IResourceManagerInternal>();
             resourceManager.Initialize(null);
             resourceManager.MountString("/TestMap.yml", MapData);
-            resourceManager.MountString("/Prototypes/TestMapEntity.yml", Prototype);
+            resourceManager.MountString("/EnginePrototypes/TestMapEntity.yml", Prototype);
 
             var protoMan = IoCManager.Resolve<IPrototypeManager>();
             protoMan.RegisterType(typeof(EntityPrototype));
 
+            protoMan.LoadDirectory(new ResourcePath("/EnginePrototypes"));
             protoMan.LoadDirectory(new ResourcePath("/Prototypes"));
+            protoMan.ResolveResults();
         }
 
         [Test]
@@ -103,14 +93,19 @@ entities:
             var entMan = IoCManager.Resolve<IEntityManager>();
 
             var mapId = map.CreateMap();
-            map.GetMapEntity(mapId).EnsureComponent<PhysicsMapComponent>();
+            // Yay test bullshit
+            var mapUid = map.GetMapEntityId(mapId);
+            entMan.EnsureComponent<PhysicsMapComponent>(mapUid);
+            entMan.EnsureComponent<BroadphaseComponent>(mapUid);
+
             var mapLoad = IoCManager.Resolve<IMapLoader>();
-            var grid = mapLoad.LoadBlueprint(mapId, "/TestMap.yml");
+            var grid = mapLoad.LoadBlueprint(mapId, "/TestMap.yml").gridId;
 
             Assert.That(grid, NUnit.Framework.Is.Not.Null);
 
-            var entity = entMan.GetEntity(grid!.GridEntityId).Transform.Children.Single().Owner;
-            var c = entity.GetComponent<MapDeserializeTestComponent>();
+            var geid = map.GetGridEuid(grid!.Value);
+            var entity = entMan.GetComponent<TransformComponent>(geid).Children.Single().Owner;
+            var c = entMan.GetComponent<MapDeserializeTestComponent>(entity);
 
             Assert.That(c.Bar, Is.EqualTo(2));
             Assert.That(c.Foo, Is.EqualTo(3));
@@ -120,8 +115,6 @@ entities:
         [DataDefinition]
         private sealed class MapDeserializeTestComponent : Component
         {
-            public override string Name => "MapDeserializeTest";
-
             [DataField("foo")] public int Foo { get; set; } = -1;
             [DataField("bar")] public int Bar { get; set; } = -1;
             [DataField("baz")] public int Baz { get; set; } = -1;

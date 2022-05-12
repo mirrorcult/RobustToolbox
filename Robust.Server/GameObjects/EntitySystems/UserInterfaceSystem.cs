@@ -5,13 +5,15 @@ using System.Linq;
 using JetBrains.Annotations;
 using Robust.Server.Player;
 using Robust.Shared.GameObjects;
+using Robust.Shared.IoC;
+using Robust.Shared.Log;
 using Robust.Shared.Serialization.TypeSerializers.Implementations.Custom;
 using Robust.Shared.ViewVariables;
 
 namespace Robust.Server.GameObjects
 {
     [UsedImplicitly]
-    public class UserInterfaceSystem : SharedUserInterfaceSystem
+    public sealed class UserInterfaceSystem : SharedUserInterfaceSystem
     {
         private const float MaxWindowRange = 2;
         private const float MaxWindowRangeSquared = MaxWindowRange * MaxWindowRange;
@@ -44,12 +46,44 @@ namespace Robust.Server.GameObjects
             RaiseNetworkEvent(msg, session.ConnectedClient);
         }
 
+        /// <summary>
+        ///     Validates the received message, and then pass it onto systems/components
+        /// </summary>
         private void OnMessageReceived(BoundUIWrapMessage msg, EntitySessionEventArgs args)
         {
             var uid = msg.Entity;
-            if (!EntityManager.TryGetComponent<ServerUserInterfaceComponent>(uid, out var uiComp))
+            if (!TryComp(uid, out ServerUserInterfaceComponent? uiComp) || args.SenderSession is not IPlayerSession session)
                 return;
 
+            if (!uiComp.TryGetBoundUserInterface(msg.UiKey, out var ui))
+            {
+                Logger.DebugS("go.comp.ui", "Got BoundInterfaceMessageWrapMessage for unknown UI key: {0}", msg.UiKey);
+                return;
+            }
+
+            if (!ui.SessionHasOpen(session))
+            {
+                Logger.DebugS("go.comp.ui", $"UI {msg.UiKey} got BoundInterfaceMessageWrapMessage from a client who was not subscribed: {session}", msg.UiKey);
+                return;
+            }
+
+            // if they want to close the UI, we can go home early.
+            if (msg.Message is CloseBoundInterfaceMessage)
+            {
+                ui.CloseShared(session);
+                return;
+            }
+
+            // verify that the user is allowed to press buttons on this UI:
+            if (ui.RequireInputValidation)
+            {
+                var attempt = new BoundUserInterfaceMessageAttempt(args.SenderSession, uid, msg.UiKey);
+                RaiseLocalEvent(attempt);
+                if (attempt.Cancelled)
+                    return;
+            }
+
+            // get the wrapped message and populate it with the sender & UI key information.
             var message = msg.Message;
             message.Session = args.SenderSession;
             message.Entity = uid;
@@ -58,7 +92,10 @@ namespace Robust.Server.GameObjects
             // Raise as object so the correct type is used.
             RaiseLocalEvent(uid, (object)message);
 
-            uiComp.ReceiveMessage((IPlayerSession) args.SenderSession, msg);
+            // Once we have populated our message's wrapped message, we will wrap it up into a message that can be sent
+            // to old component-code.
+            var WrappedUnwrappedMessageMessageMessage = new ServerBoundUserInterfaceMessage(message, session);
+            ui.ReceiveMessage(WrappedUnwrappedMessageMessageMessage);
         }
 
         /// <inheritdoc />
@@ -80,28 +117,28 @@ namespace Robust.Server.GameObjects
             _sessionCache.Clear();
             _sessionCache.AddRange(ui.SubscribedSessions);
 
-            var transform = ui.Owner.Owner.Transform;
+            var transform = EntityManager.GetComponent<TransformComponent>(ui.Owner.Owner);
 
             var uiPos = transform.WorldPosition;
             var uiMap = transform.MapID;
 
             foreach (var session in _sessionCache)
             {
-                var attachedEntity = session.AttachedEntity;
+                var attachedEntityTransform = session.AttachedEntityTransform;
 
                 // The component manages the set of sessions, so this invalid session should be removed soon.
-                if (attachedEntity == null || !attachedEntity.IsValid())
+                if (attachedEntityTransform == null)
                 {
                     continue;
                 }
 
-                if (uiMap != attachedEntity.Transform.MapID)
+                if (uiMap != attachedEntityTransform.MapID)
                 {
                     ui.Close(session);
                     continue;
                 }
 
-                var distanceSquared = (uiPos - attachedEntity.Transform.WorldPosition).LengthSquared;
+                var distanceSquared = (uiPos - attachedEntityTransform.WorldPosition).LengthSquared;
                 if (distanceSquared > MaxWindowRangeSquared)
                 {
                     ui.Close(session);
@@ -139,7 +176,7 @@ namespace Robust.Server.GameObjects
 
         public BoundUserInterface? GetUiOrNull(EntityUid uid, object uiKey, ServerUserInterfaceComponent? ui = null)
         {
-            return TryGetUi(uid, uiKey, out var bui)
+            return TryGetUi(uid, uiKey, out var bui, ui)
                 ? bui
                 : null;
         }
@@ -148,12 +185,12 @@ namespace Robust.Server.GameObjects
         {
             bui = null;
 
-            return Resolve(uid, ref ui) && ui.TryGetBoundUserInterface(uiKey, out bui);
+            return Resolve(uid, ref ui, false) && ui.TryGetBoundUserInterface(uiKey, out bui);
         }
 
         public bool IsUiOpen(EntityUid uid, object uiKey, ServerUserInterfaceComponent? ui = null)
         {
-            if (!Resolve(uid, ref ui))
+            if (!Resolve(uid, ref ui, false))
                 return false;
 
             if (!TryGetUi(uid, uiKey, out var bui, ui))
@@ -164,7 +201,7 @@ namespace Robust.Server.GameObjects
 
         public bool TrySetUiState(EntityUid uid, object uiKey, BoundUserInterfaceState state, IPlayerSession? session = null, ServerUserInterfaceComponent? ui = null)
         {
-            if (!Resolve(uid, ref ui))
+            if (!Resolve(uid, ref ui, false))
                 return false;
 
             if (!TryGetUi(uid, uiKey, out var bui, ui))

@@ -6,7 +6,7 @@ using Robust.UnitTesting.Server;
 namespace Robust.UnitTesting.Shared.GameObjects
 {
     [TestFixture, Parallelizable]
-    class EntityManagerTests
+    sealed class EntityManagerTests
     {
         private static readonly MapId TestMapId = new(1);
 
@@ -43,7 +43,7 @@ namespace Robust.UnitTesting.Shared.GameObjects
 
             var entMan = sim.Resolve<IEntityManager>();
             var newEnt = entMan.SpawnEntity("dummy", new MapCoordinates(0, 0, TestMapId));
-            Assert.That(newEnt, Is.Not.Null);
+            Assert.That(newEnt, Is.Not.EqualTo(EntityUid.Invalid));
         }
     }
 }

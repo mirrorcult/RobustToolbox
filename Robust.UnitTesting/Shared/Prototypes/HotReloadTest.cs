@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Robust.Shared.GameObjects;
@@ -10,7 +11,7 @@ using Robust.Shared.Serialization.Manager.Attributes;
 namespace Robust.UnitTesting.Shared.Prototypes
 {
     [TestFixture]
-    public class HotReloadTest : RobustUnitTest
+    public sealed class HotReloadTest : RobustUnitTest
     {
         private const string DummyId = "Dummy";
         public const string HotReloadTestComponentOneId = "HotReloadTestOne";
@@ -40,15 +41,15 @@ namespace Robust.UnitTesting.Shared.Prototypes
         public void Setup()
         {
             _components = IoCManager.Resolve<IComponentFactory>();
-            _components.RegisterClass<HotReloadTestComponentOne>();
-            _components.RegisterClass<HotReloadTestComponentTwo>();
+            _components.RegisterClass<HotReloadTestOneComponent>();
+            _components.RegisterClass<HotReloadTestTwoComponent>();
             _components.GenerateNetIds();
 
             IoCManager.Resolve<ISerializationManager>().Initialize();
             _prototypes = (PrototypeManager) IoCManager.Resolve<IPrototypeManager>();
             _prototypes.RegisterType(typeof(EntityPrototype));
             _prototypes.LoadString(InitialPrototypes);
-            _prototypes.Resync();
+            _prototypes.ResolveResults();
 
             _maps = IoCManager.Resolve<IMapManager>();
             _entities = IoCManager.Resolve<IEntityManager>();
@@ -59,23 +60,24 @@ namespace Robust.UnitTesting.Shared.Prototypes
         {
             _maps.CreateNewMapEntity(new MapId(0));
             var entity = _entities.SpawnEntity(DummyId, MapCoordinates.Nullspace);
-            var entityComponent = entity.GetComponent<HotReloadTestComponentOne>();
+            var entityComponent = IoCManager.Resolve<IEntityManager>().GetComponent<HotReloadTestOneComponent>(entity);
 
             Assert.That(entityComponent.Value, Is.EqualTo(5));
-            Assert.False(entity.HasComponent<HotReloadTestComponentTwo>());
+            Assert.False(IoCManager.Resolve<IEntityManager>().HasComponent<HotReloadTestTwoComponent>(entity));
 
             var reloaded = false;
             _prototypes.PrototypesReloaded += _ => reloaded = true;
 
-            _prototypes.ReloadPrototypes(new List<IPrototype>());
+            _prototypes.ReloadPrototypes(new Dictionary<Type, HashSet<string>>());
 
             Assert.True(reloaded);
             reloaded = false;
 
             Assert.That(entityComponent.Value, Is.EqualTo(5));
-            Assert.False(entity.HasComponent<HotReloadTestComponentTwo>());
+            Assert.False(IoCManager.Resolve<IEntityManager>().HasComponent<HotReloadTestTwoComponent>(entity));
 
-            var changedPrototypes = _prototypes.LoadString(ReloadedPrototypes, true);
+            var changedPrototypes = new Dictionary<Type, HashSet<string>>();
+            _prototypes.LoadString(ReloadedPrototypes, true, changedPrototypes);
             _prototypes.ReloadPrototypes(changedPrototypes);
 
             Assert.True(reloaded);
@@ -85,9 +87,10 @@ namespace Robust.UnitTesting.Shared.Prototypes
             Assert.That(entityComponent.Value, Is.EqualTo(5));
 
             // New components are added
-            Assert.True(entity.HasComponent<HotReloadTestComponentTwo>());
+            Assert.True(IoCManager.Resolve<IEntityManager>().HasComponent<HotReloadTestTwoComponent>(entity));
 
-            changedPrototypes = _prototypes.LoadString(InitialPrototypes, true);
+            changedPrototypes = new Dictionary<Type, HashSet<string>>();
+            _prototypes.LoadString(InitialPrototypes, true, changedPrototypes);
             _prototypes.ReloadPrototypes(changedPrototypes);
 
             Assert.True(reloaded);
@@ -97,20 +100,17 @@ namespace Robust.UnitTesting.Shared.Prototypes
             Assert.That(entityComponent.Value, Is.EqualTo(5));
 
             // Old components are removed
-            Assert.False(entity.HasComponent<HotReloadTestComponentTwo>());
+            Assert.False(IoCManager.Resolve<IEntityManager>().HasComponent<HotReloadTestTwoComponent>(entity));
         }
     }
 
-    public class HotReloadTestComponentOne : Component
+    public sealed class HotReloadTestOneComponent : Component
     {
-        public override string Name => HotReloadTest.HotReloadTestComponentOneId;
-
         [DataField("value")]
         public int Value { get; }
     }
 
-    public class HotReloadTestComponentTwo : Component
+    public sealed class HotReloadTestTwoComponent : Component
     {
-        public override string Name => HotReloadTest.HotReloadTestComponentTwoId;
     }
 }

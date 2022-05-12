@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using Robust.Client.Log;
+using Robust.Client.Player;
 using Robust.Shared.Console;
+using Robust.Shared.Enums;
+using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
@@ -11,7 +14,7 @@ using Robust.Shared.Utility;
 
 namespace Robust.Client.Console
 {
-    public class AddStringArgs : EventArgs
+    public sealed class AddStringArgs : EventArgs
     {
         public string Text { get; }
 
@@ -27,7 +30,7 @@ namespace Robust.Client.Console
         }
     }
 
-    public class AddFormattedMessageArgs : EventArgs
+    public sealed class AddFormattedMessageArgs : EventArgs
     {
         public readonly FormattedMessage Message;
 
@@ -38,8 +41,10 @@ namespace Robust.Client.Console
     }
 
     /// <inheritdoc cref="IClientConsoleHost" />
-    internal class ClientConsoleHost : ConsoleHost, IClientConsoleHost
+    internal sealed class ClientConsoleHost : ConsoleHost, IClientConsoleHost
     {
+        [Dependency] private readonly IClientConGroupController _conGroup = default!;
+
         private bool _requestedCommands;
 
         /// <inheritdoc />
@@ -103,6 +108,14 @@ namespace Robust.Client.Console
 
             if (AvailableCommands.ContainsKey(commandName))
             {
+                var playerManager = IoCManager.Resolve<IPlayerManager>();
+#if !DEBUG
+                if (!_conGroup.CanCommand(commandName) && playerManager.LocalPlayer?.Session.Status > SessionStatus.Connecting)
+                {
+                    WriteError(null, $"Insufficient perms for command: {commandName}");
+                    return;
+                }
+#endif
                 var command1 = AvailableCommands[commandName];
                 args.RemoveAt(0);
                 var shell = new ConsoleShell(this, null);
@@ -121,7 +134,7 @@ namespace Robust.Client.Console
             if (!NetManager.IsConnected) // we don't care about session on client
                 return;
 
-            var msg = NetManager.CreateNetMessage<MsgConCmd>();
+            var msg = new MsgConCmd();
             msg.Text = command;
             NetManager.ClientSendMessage(msg);
         }
@@ -185,7 +198,7 @@ namespace Robust.Client.Console
             if (!NetManager.IsConnected)
                 return;
 
-            var msg = NetManager.CreateNetMessage<MsgConCmdReg>();
+            var msg = new MsgConCmdReg();
             NetManager.ClientSendMessage(msg);
 
             _requestedCommands = true;
@@ -196,7 +209,7 @@ namespace Robust.Client.Console
     /// These dummies are made purely so list and help can list server-side commands.
     /// </summary>
     [Reflect(false)]
-    internal class ServerDummyCommand : IConsoleCommand
+    internal sealed class ServerDummyCommand : IConsoleCommand
     {
         internal ServerDummyCommand(string command, string help, string description)
         {

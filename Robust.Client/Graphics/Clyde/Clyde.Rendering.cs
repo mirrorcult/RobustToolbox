@@ -8,7 +8,6 @@ using Robust.Client.GameObjects;
 using Robust.Client.Utility;
 using Robust.Shared.Maths;
 using Robust.Shared.Utility;
-using Color = Robust.Shared.Maths.Color;
 using TKStencilOp = OpenToolkit.Graphics.OpenGL4.StencilOp;
 
 namespace Robust.Client.Graphics.Clyde
@@ -416,8 +415,14 @@ namespace Robust.Client.Graphics.Clyde
                     case float f:
                         program.SetUniform(name, f);
                         break;
+                    case float[] fArr:
+                        program.SetUniform(name, fArr);
+                        break;
                     case Vector2 vector2:
                         program.SetUniform(name, vector2);
+                        break;
+                    case Vector2[] vector2Arr:
+                        program.SetUniform(name, vector2Arr);
                         break;
                     case Vector3 vector3:
                         program.SetUniform(name, vector3);
@@ -448,7 +453,7 @@ namespace Robust.Client.Graphics.Clyde
                         //function! If passing in textures as uniforms ever stops working it might be since someone made it use all the way up to Texture6 too.
                         //Might change this in the future?
                         TextureUnit cTarget = TextureUnit.Texture6 + textureUnitVal;
-                        SetTexture(cTarget, ((ClydeTexture) clydeTexture).TextureId);
+                        SetTexture(cTarget, clydeTexture.TextureId);
                         program.SetUniformTexture(name, cTarget);
                         textureUnitVal++;
                         break;
@@ -995,9 +1000,9 @@ namespace Robust.Client.Graphics.Clyde
 
         private sealed class SpriteDrawingOrderComparer : IComparer<int>
         {
-            private readonly RefList<(SpriteComponent, Matrix3, Angle, float)> _drawList;
+            private readonly RefList<(SpriteComponent, Vector2, Angle, Box2)> _drawList;
 
-            public SpriteDrawingOrderComparer(RefList<(SpriteComponent, Matrix3, Angle, float)> drawList)
+            public SpriteDrawingOrderComparer(RefList<(SpriteComponent, Vector2, Angle, Box2)> drawList)
             {
                 _drawList = drawList;
             }
@@ -1020,14 +1025,15 @@ namespace Robust.Client.Graphics.Clyde
                     return cmp;
                 }
 
-                cmp = _drawList[y].Item4.CompareTo(_drawList[x].Item4);
+                // compare the top of the sprite's BB for y-sorting. Because screen coordinates are flipped, the "top" of the BB is actually the "bottom".
+                cmp = _drawList[x].Item4.Top.CompareTo(_drawList[y].Item4.Top);
 
                 if (cmp != 0)
                 {
                     return cmp;
                 }
 
-                return a.Owner.Uid.CompareTo(b.Owner.Uid);
+                return a.Owner.CompareTo(b.Owner);
             }
         }
 

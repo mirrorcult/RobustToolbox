@@ -22,6 +22,8 @@ namespace Robust.Client.ResourceManagement
     {
         private static readonly float[] OneArray = {1};
 
+        public override ResourcePath? Fallback => new("/Textures/error.rsi");
+
         private static readonly JsonSerializerOptions SerializerOptions =
             new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
@@ -125,7 +127,7 @@ namespace Robust.Client.ResourceManagement
                 reg.Indices = foldedIndices;
                 reg.Offsets = callbackOffset;
 
-                var state = new RSI.State(frameSize, stateObject.StateId, stateObject.DirType, foldedDelays,
+                var state = new RSI.State(frameSize, rsi, stateObject.StateId, stateObject.DirType, foldedDelays,
                     textures);
                 rsi.AddState(state);
 
@@ -230,7 +232,7 @@ namespace Robust.Client.ResourceManagement
 
             using (var manifestFile = cache.ContentFileRead(manifestPath))
             {
-                if (manifestFile.Length <= 4096)
+                if (manifestFile.CanSeek && manifestFile.Length <= 4096)
                 {
                     // Most RSIs are actually tiny so if that's the case just load them into a stackalloc buffer.
                     // Avoids a ton of allocations with stream reader etc
@@ -542,6 +544,7 @@ namespace Robust.Client.ResourceManagement
     }
 
     [Serializable]
+    [Virtual]
     public class RSILoadException : Exception
     {
         public RSILoadException()

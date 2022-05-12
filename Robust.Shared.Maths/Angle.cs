@@ -87,7 +87,7 @@ namespace Robust.Shared.Maths
             var ang = Theta % (2 * Math.PI);
 
             if (ang < 0.0f) // convert -PI > PI to 0 > 2PI
-                ang += 2 * (float) Math.PI;
+                ang += 2 * Math.PI;
 
             return (Direction) (Math.Floor((ang + CardinalOffset) / CardinalSegment) * 2 % 8);
         }
@@ -229,12 +229,16 @@ namespace Robust.Shared.Maths
         /// </summary>
         public static Angle Lerp(in Angle a, in Angle b, float factor)
         {
-            var degA = MathHelper.RadiansToDegrees(Reduce(a));
-            var degB = MathHelper.RadiansToDegrees(Reduce(b));
-            var delta = MathHelper.Mod((degB - degA), 360);
-            if (delta > 180)
-                delta -= 360;
-            return new Angle(MathHelper.DegreesToRadians(degA + delta * MathHelper.Clamp(factor, 0, 1)));
+            return a + ShortestDistance(a, b) * factor;
+        }
+
+        /// <summary>
+        ///     Returns the shortest distance between two angles.
+        /// </summary>
+        public static Angle ShortestDistance(in Angle a, in Angle b)
+        {
+            var delta = (b - a) % Math.Tau;
+            return 2 * delta % Math.Tau - delta;
         }
 
         /// <summary>
@@ -278,6 +282,9 @@ namespace Robust.Shared.Maths
 
         public static Angle operator -(Angle a, Angle b)
             => new(a.Theta - b.Theta);
+
+        public static Angle operator -(Angle orig)
+            => new(-orig.Theta);
 
         public override string ToString()
         {

@@ -20,6 +20,7 @@ namespace Robust.Client.UserInterface
     ///     See https://docs.spacestation14.io/en/engine/user-interface for some basic concepts.
     /// </summary>
     [PublicAPI]
+    [Virtual]
     public partial class Control : IDisposable
     {
         private readonly List<Control> _orderedChildren = new();
@@ -39,6 +40,9 @@ namespace Robust.Client.UserInterface
         /// </summary>
         [ViewVariables]
         public string? Name { get; set; }
+
+        // ReSharper disable once ValueParameterNotUsed
+        public AccessLevel? Access { set { } }
 
         /// <summary>
         ///     If true, this control will always be rendered, even if other UI rendering is disabled.
@@ -131,7 +135,7 @@ namespace Robust.Client.UserInterface
                         return false;
                     }
 
-                    if (parent == UserInterfaceManager.RootControl)
+                    if (parent is UIRoot)
                     {
                         return true;
                     }
@@ -893,7 +897,7 @@ namespace Robust.Client.UserInterface
             Ignore = 2,
         }
 
-        public class OrderedChildCollection : ICollection<Control>, IReadOnlyCollection<Control>
+        public sealed class OrderedChildCollection : ICollection<Control>, IReadOnlyCollection<Control>
         {
             private readonly Control Owner;
 

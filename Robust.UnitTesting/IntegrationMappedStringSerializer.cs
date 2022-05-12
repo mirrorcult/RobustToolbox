@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 using NetSerializer;
-using Newtonsoft.Json.Linq;
 using Robust.Shared.IoC;
 using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
@@ -22,7 +21,7 @@ namespace Robust.UnitTesting
 
         public Task Handshake(INetChannel channel)
         {
-            var message = _net.CreateNetMessage<MsgMapStrServerHandshake>();
+            var message = new MsgMapStrServerHandshake();
             message.Hash = _hash;
             _net.ServerSendMessage(message, channel);
 
@@ -45,11 +44,6 @@ namespace Robust.UnitTesting
         }
 
         public void AddStrings(YamlStream yaml)
-        {
-            // Nada.
-        }
-
-        public void AddStrings(JObject obj)
         {
             // Nada.
         }

@@ -8,7 +8,7 @@ using Robust.Shared.Maths;
 namespace Robust.UnitTesting.Shared.Map
 {
     [TestFixture]
-    public class GridContraction_Test : RobustIntegrationTest
+    public sealed class GridContraction_Test : RobustIntegrationTest
     {
         [Test]
         public async Task TestGridDeletes()
@@ -23,7 +23,7 @@ namespace Robust.UnitTesting.Shared.Map
             {
                 var mapId = mapManager.CreateMap();
                 var grid = mapManager.CreateGrid(mapId);
-                var gridEntity = entManager.GetEntity(grid.GridEntityId);
+                var gridEntity = grid.GridEntityId;
 
                 for (var i = 0; i < 10; i++)
                 {
@@ -35,7 +35,7 @@ namespace Robust.UnitTesting.Shared.Map
                     grid.SetTile(new Vector2i(i, 0), Tile.Empty);
                 }
 
-                Assert.That(gridEntity.Deleted);
+                Assert.That(entManager.Deleted(gridEntity));
             });
         }
 
@@ -72,7 +72,7 @@ namespace Robust.UnitTesting.Shared.Map
                     grid.SetTile(new Vector2i(i, 0), Tile.Empty);
                 }
 
-                Assert.That(!entManager.GetEntity(grid.GridEntityId).Deleted);
+                Assert.That(!((!entManager.EntityExists(grid.GridEntityId) ? EntityLifeStage.Deleted : entManager.GetComponent<MetaDataComponent>(grid.GridEntityId).EntityLifeStage) >= EntityLifeStage.Deleted));
             });
         }
     }

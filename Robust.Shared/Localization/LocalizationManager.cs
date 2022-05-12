@@ -27,6 +27,7 @@ namespace Robust.Shared.Localization
         [Dependency] private readonly IResourceManager _res = default!;
         [Dependency] private readonly ILogManager _log = default!;
         [Dependency] private readonly IPrototypeManager _prototype = default!;
+        [Dependency] private readonly IEntityManager _entMan = default!;
 
         private ISawmill _logSawmill = default!;
         private readonly Dictionary<CultureInfo, FluentBundle> _contexts = new();
@@ -46,7 +47,7 @@ namespace Robust.Shared.Localization
 
             if (!TryGetString(messageId, out var msg))
             {
-                _logSawmill.Warning("Unknown messageId ({culture}): {messageId}", _defaultCulture.Name, messageId);
+                _logSawmill.Debug("Unknown messageId ({culture}): {messageId}", _defaultCulture.Name, messageId);
                 msg = messageId;
             }
 
@@ -61,7 +62,7 @@ namespace Robust.Shared.Localization
 
             if (!TryGetString(messageId, out var msg, args0))
             {
-                _logSawmill.Warning("Unknown messageId ({culture}): {messageId}", _defaultCulture.Name, messageId);
+                _logSawmill.Debug("Unknown messageId ({culture}): {messageId}", _defaultCulture.Name, messageId);
                 msg = messageId;
             }
 

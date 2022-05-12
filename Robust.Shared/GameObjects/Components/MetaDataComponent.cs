@@ -5,6 +5,7 @@ using Robust.Shared.Players;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager.Attributes;
+using Robust.Shared.Timing;
 using Robust.Shared.ViewVariables;
 
 namespace Robust.Shared.GameObjects
@@ -13,7 +14,7 @@ namespace Robust.Shared.GameObjects
     ///     Serialized state of a <see cref="MetaDataComponent"/>.
     /// </summary>
     [Serializable, NetSerializable]
-    public class MetaDataComponentState : ComponentState
+    public sealed class MetaDataComponentState : ComponentState
     {
         /// <summary>
         ///     The in-game name of this entity.
@@ -47,17 +48,16 @@ namespace Robust.Shared.GameObjects
     ///     Contains meta data about this entity that isn't component specific.
     /// </summary>
     [NetworkedComponent]
-    public class MetaDataComponent : Component
+    public sealed class MetaDataComponent : Component
     {
-        [DataField("name")]
-        private string? _entityName;
-        [DataField("desc")]
-        private string? _entityDescription;
-        private EntityPrototype? _entityPrototype;
+        [DataField("name")] internal string? _entityName;
+        [DataField("desc")] internal string? _entityDescription;
+        internal EntityPrototype? _entityPrototype;
         private bool _entityPaused;
 
-        /// <inheritdoc />
-        public override string Name => "MetaData";
+        // Every entity starts at tick 1, because they are conceptually created in the time between 0->1
+        [ViewVariables]
+        public GameTick EntityLastModifiedTick { get; internal set; } = new(1);
 
         /// <summary>
         ///     The in-game name of this entity.
@@ -133,42 +133,32 @@ namespace Robust.Shared.GameObjects
         public EntityLifeStage EntityLifeStage { get; internal set; }
 
         [ViewVariables]
+        public MetaDataFlags Flags { get; internal set; }
+
+        /// <summary>
+        ///     The sum of our visibility layer and our parent's visibility layers.
+        ///     Server-only.
+        /// </summary>
+        [ViewVariables]
+        public int VisibilityMask { get; internal set; }
+
+        [ViewVariables]
         public bool EntityPaused
         {
             get => _entityPaused;
             set
             {
-                if (_entityPaused == value || value && Owner.HasComponent<IgnorePauseComponent>())
+                if (_entityPaused == value)
                     return;
 
                 _entityPaused = value;
-                Owner.EntityManager.EventBus.RaiseLocalEvent(Owner.Uid, new EntityPausedEvent(Owner.Uid, value));
+                IoCManager.Resolve<IEntityManager>().EventBus.RaiseLocalEvent(Owner, new EntityPausedEvent(Owner, value));
             }
         }
 
         public bool EntityInitialized => EntityLifeStage >= EntityLifeStage.Initialized;
         public bool EntityInitializing => EntityLifeStage == EntityLifeStage.Initializing;
         public bool EntityDeleted => EntityLifeStage >= EntityLifeStage.Deleted;
-
-
-        public override ComponentState GetComponentState(ICommonSession player)
-        {
-            return new MetaDataComponentState(_entityName, _entityDescription, EntityPrototype?.ID);
-        }
-
-        public override void HandleComponentState(ComponentState? curState, ComponentState? nextState)
-        {
-            base.HandleComponentState(curState, nextState);
-
-            if (!(curState is MetaDataComponentState state))
-                return;
-
-            _entityName = state.Name;
-            _entityDescription = state.Description;
-
-            if(state.PrototypeId != null)
-                _entityPrototype = IoCManager.Resolve<IPrototypeManager>().Index<EntityPrototype>(state.PrototypeId);
-        }
 
         internal override void ClearTicks()
         {
@@ -178,5 +168,19 @@ namespace Robust.Shared.GameObjects
             // (Creation can still be cleared though)
             ClearCreationTick();
         }
+    }
+
+    [Flags]
+    public enum MetaDataFlags : byte
+    {
+        None = 0,
+        /// <summary>
+        /// Whether the entity has states specific to a particular player.
+        /// </summary>
+        EntitySpecific = 1 << 0,
+        /// <summary>
+        /// Whether the entity is currently inside of a container.
+        /// </summary>
+        InContainer = 1 << 1,
     }
 }

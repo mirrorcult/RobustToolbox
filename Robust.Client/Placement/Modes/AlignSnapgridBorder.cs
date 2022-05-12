@@ -1,11 +1,10 @@
 using System;
-using Robust.Client.Graphics;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 
 namespace Robust.Client.Placement.Modes
 {
-    public class SnapgridBorder : SnapgridCenter
+    public sealed class SnapgridBorder : SnapgridCenter
     {
         public override bool HasLineMode => true;
         public override bool HasGridMode => true;
@@ -34,8 +33,8 @@ namespace Robust.Client.Placement.Modes
             GridDistancing = SnapSize;
 
             var mouselocal = new Vector2( //Round local coordinates onto the snap grid
-                (float) MathF.Round(MouseCoords.X / SnapSize, MidpointRounding.AwayFromZero) * SnapSize,
-                (float) MathF.Round(MouseCoords.Y / SnapSize, MidpointRounding.AwayFromZero) * SnapSize);
+                MathF.Round(MouseCoords.X / SnapSize, MidpointRounding.AwayFromZero) * SnapSize,
+                MathF.Round(MouseCoords.Y / SnapSize, MidpointRounding.AwayFromZero) * SnapSize);
 
             //Convert back to original world and screen coordinates after applying offset
             MouseCoords =

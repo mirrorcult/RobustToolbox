@@ -14,9 +14,9 @@ namespace Robust.UnitTesting.Shared.GameObjects
 {
     [TestFixture]
     [TestOf(typeof(EntitySystemManager))]
-    public class EntitySystemManagerOrderTest
+    public sealed class EntitySystemManagerOrderTest
     {
-        private class Counter
+        private sealed class Counter
         {
             public int X;
         }
@@ -28,6 +28,7 @@ namespace Robust.UnitTesting.Shared.GameObjects
 
             public virtual IEnumerable<Type> UpdatesAfter => Enumerable.Empty<Type>();
             public virtual IEnumerable<Type> UpdatesBefore => Enumerable.Empty<Type>();
+            public bool UpdatesOutsidePrediction => true;
             public void Initialize() { }
             public void Shutdown() { }
 
@@ -40,22 +41,22 @@ namespace Robust.UnitTesting.Shared.GameObjects
 
         // Expected update order is is A -> D -> C -> B
 
-        private class TestSystemA : TestSystemBase
+        private sealed class TestSystemA : TestSystemBase
         {
 
         }
 
-        private class TestSystemB : TestSystemBase
+        private sealed class TestSystemB : TestSystemBase
         {
             public override IEnumerable<Type> UpdatesAfter => new[] {typeof(TestSystemA)};
         }
 
-        private class TestSystemC : TestSystemBase
+        private sealed class TestSystemC : TestSystemBase
         {
             public override IEnumerable<Type> UpdatesBefore => new[] {typeof(TestSystemB)};
         }
 
-        private class TestSystemD : TestSystemBase
+        private sealed class TestSystemD : TestSystemBase
         {
             public override IEnumerable<Type> UpdatesAfter => new[] {typeof(TestSystemA)};
             public override IEnumerable<Type> UpdatesBefore => new[] {typeof(TestSystemC)};
@@ -99,7 +100,7 @@ namespace Robust.UnitTesting.Shared.GameObjects
             systems.GetEntitySystem<TestSystemC>().Counter = counter;
             systems.GetEntitySystem<TestSystemD>().Counter = counter;
 
-            systems.TickUpdate(1);
+            systems.TickUpdate(1, noPredictions: false);
 
             Assert.That(counter.X, Is.EqualTo(4));
 

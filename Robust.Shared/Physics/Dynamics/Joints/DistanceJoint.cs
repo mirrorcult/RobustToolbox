@@ -28,10 +28,9 @@ using System;
 using Robust.Shared.Configuration;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
-using Robust.Shared.Log;
 using Robust.Shared.Maths;
 using Robust.Shared.Serialization;
-using Robust.Shared.Utility;
+using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.ViewVariables;
 
 namespace Robust.Shared.Physics.Dynamics.Joints
@@ -61,10 +60,6 @@ namespace Robust.Shared.Physics.Dynamics.Joints
                 LocalAnchorA = LocalAnchorA,
                 LocalAnchorB = LocalAnchorB
             };
-
-            var configManager = IoCManager.Resolve<IConfigurationManager>();
-            joint.LinearSlop = configManager.GetCVar(CVars.LinearSlop);
-            joint.WarmStarting = configManager.GetCVar(CVars.WarmStarting);
 
             return joint;
         }
@@ -119,10 +114,9 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         private float _currentLength;
         private float _softMass;
 
-        internal float LinearSlop;
-        internal bool WarmStarting;
-
         public override JointType JointType => JointType.Distance;
+
+        public DistanceJoint() {}
 
         /// <summary>
         /// This requires defining an
@@ -139,9 +133,11 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         public DistanceJoint(EntityUid bodyA, EntityUid bodyB, Vector2 anchorA, Vector2 anchorB)
             : base(bodyA, bodyB)
         {
-            Length = MathF.Max(LinearSlop, (BodyB.GetWorldPoint(anchorB) - BodyA.GetWorldPoint(anchorA)).Length);
+            Length = MathF.Max(PhysicsConstants.LinearSlop, (BodyB.GetWorldPoint(anchorB) - BodyA.GetWorldPoint(anchorA)).Length);
             _minLength = _length;
             _maxLength = _length;
+            LocalAnchorA = anchorA;
+            LocalAnchorB = anchorB;
         }
 
         /// <summary>
@@ -149,6 +145,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         /// Manipulating the length can lead to non-physical behavior when the frequency is zero.
         /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
+        [DataField("length")]
         public float Length
         {
             get => _length;
@@ -157,7 +154,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
                 if (MathHelper.CloseTo(value, _length)) return;
 
                 _impulse = 0.0f;
-                _length = MathF.Max(value, LinearSlop);
+                _length = MathF.Max(value, PhysicsConstants.LinearSlop);
                 Dirty();
             }
         }
@@ -168,6 +165,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         ///     The upper limit allowed between the 2 bodies.
         /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
+        [DataField("maxLength")]
         public float MaxLength
         {
             get => _maxLength;
@@ -187,6 +185,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         ///     The lower limit allowed between the 2 bodies.
         /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
+        [DataField("minLength")]
         public float MinLength
         {
             get => _minLength;
@@ -195,14 +194,18 @@ namespace Robust.Shared.Physics.Dynamics.Joints
                 if (MathHelper.CloseTo(value, _minLength)) return;
 
                 _lowerImpulse = 0.0f;
-                _minLength = Math.Clamp(value, LinearSlop, MaxLength);
+                _minLength = Math.Clamp(value, PhysicsConstants.LinearSlop, MaxLength);
                 Dirty();
             }
         }
 
         private float _minLength;
 
+        /// <summary>
+        /// The linear stiffness in N/m.
+        /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
+        [DataField("stiffness")]
         public float Stiffness
         {
             get => _stiffness;
@@ -217,7 +220,11 @@ namespace Robust.Shared.Physics.Dynamics.Joints
 
         private float _stiffness;
 
+        /// <summary>
+        /// The linear damping in N*s/m.
+        /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
+        [DataField("damping")]
         public float Damping
         {
             get => _damping;
@@ -287,8 +294,8 @@ namespace Robust.Shared.Physics.Dynamics.Joints
         {
             _indexA = BodyA.IslandIndex[data.IslandIndex];
 	        _indexB = BodyB.IslandIndex[data.IslandIndex];
-            _localCenterA = Vector2.Zero; //BodyA->m_sweep.localCenter;
-            _localCenterB = Vector2.Zero; //BodyB->m_sweep.localCenter;
+            _localCenterA = BodyA.LocalCenter;
+            _localCenterB = BodyB.LocalCenter;
 	        _invMassA = BodyA.InvMass;
 	        _invMassB = BodyB.InvMass;
 	        _invIA = BodyA.InvI;
@@ -312,7 +319,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
 
             // Handle singularity.
 	        _currentLength = _u.Length;
-	        if (_currentLength > LinearSlop)
+	        if (_currentLength > data.LinearSlop)
 	        {
 		        _u *= 1.0f / _currentLength;
 	        }
@@ -358,7 +365,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
 		        _softMass = _mass;
 	        }
 
-	        if (WarmStarting)
+	        if (data.WarmStarting)
 	        {
 		        // Scale the impulse to support a variable time step.
 		        _impulse *= data.DtRatio;
@@ -523,7 +530,7 @@ namespace Robust.Shared.Physics.Dynamics.Joints
             data.Positions[_indexB] = cB;
             data.Angles[_indexB] = aB;
 
-            return MathF.Abs(C) < LinearSlop;
+            return MathF.Abs(C) < data.LinearSlop;
         }
 
         public bool Equals(DistanceJoint? other)

@@ -54,8 +54,6 @@ namespace Robust.Shared.Physics
         /// </summary>
         void DestroyContacts();
 
-        IReadOnlyList<Fixture> Fixtures { get; }
-
         /// <summary>
         /// The type of the body, which determines how collisions effect this object.
         /// </summary>
@@ -83,7 +81,7 @@ namespace Robust.Shared.Physics
         /// <remarks>
         ///     This is useful for triggers or such to detect collision without actually causing a blockage.
         /// </remarks>
-        bool Hard { get; set; }
+        bool Hard { get; }
 
         /// <summary>
         ///     Inverse mass of the entity in kilograms (1 / Mass).
@@ -144,7 +142,5 @@ namespace Robust.Shared.Physics
         void ApplyLinearImpulse(in Vector2 impulse);
 
         void ApplyAngularImpulse(float impulse);
-
-        IEnumerable<IPhysBody> GetCollidingEntities(Vector2 offset, bool approx = true);
     }
 }

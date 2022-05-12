@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -12,10 +13,13 @@ using Robust.Shared.Timing;
 
 namespace Robust.Server.Console.Commands
 {
-    class AddMapCommand : IConsoleCommand
+    sealed class AddMapCommand : IConsoleCommand
     {
         public string Command => "addmap";
-        public string Description => "Adds a new empty map to the round. If the mapID already exists, this command does nothing.";
+
+        public string Description =>
+            "Adds a new empty map to the round. If the mapID already exists, this command does nothing.";
+
         public string Help => "addmap <mapID> [initialize]";
 
         public void Execute(IConsoleShell shell, string argStr, string[] args)
@@ -26,33 +30,34 @@ namespace Robust.Server.Console.Commands
             var mapId = new MapId(int.Parse(args[0]));
 
             var mapMgr = IoCManager.Resolve<IMapManager>();
-            var pauseMgr = IoCManager.Resolve<IPauseManager>();
 
             if (!mapMgr.MapExists(mapId))
             {
                 mapMgr.CreateMap(mapId);
                 if (args.Length >= 2 && args[1] == "false")
                 {
-                    pauseMgr.AddUninitializedMap(mapId);
+                    mapMgr.AddUninitializedMap(mapId);
                 }
+
                 shell.WriteLine($"Map with ID {mapId} created.");
                 return;
             }
 
-            shell.WriteLine($"Map with ID {mapId} already exists!");
+            shell.WriteError($"Map with ID {mapId} already exists!");
         }
     }
 
-    class RemoveMapCommand : IConsoleCommand
+    sealed class RemoveMapCommand : IConsoleCommand
     {
         public string Command => "rmmap";
         public string Description => "Removes a map from the world. You cannot remove nullspace.";
         public string Help => "rmmap <mapId>";
+
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
             if (args.Length != 1)
             {
-                shell.WriteLine("Wrong number of args.");
+                shell.WriteError("Wrong number of args.");
                 return;
             }
 
@@ -61,7 +66,7 @@ namespace Robust.Server.Console.Commands
 
             if (!mapManager.MapExists(mapId))
             {
-                shell.WriteLine($"Map {mapId.Value} does not exist.");
+                shell.WriteError($"Map {mapId.Value} does not exist.");
                 return;
             }
 
@@ -70,7 +75,7 @@ namespace Robust.Server.Console.Commands
         }
     }
 
-    public class SaveBp : IConsoleCommand
+    public sealed class SaveBp : IConsoleCommand
     {
         public string Command => "savebp";
         public string Description => "Serializes a grid to disk.";
@@ -80,13 +85,13 @@ namespace Robust.Server.Console.Commands
         {
             if (args.Length < 2)
             {
-                shell.WriteLine("Not enough arguments.");
+                shell.WriteError("Not enough arguments.");
                 return;
             }
 
             if (!int.TryParse(args[0], out var intGridId))
             {
-                shell.WriteLine("Not a valid grid ID.");
+                shell.WriteError("Not a valid grid ID.");
                 return;
             }
 
@@ -97,7 +102,7 @@ namespace Robust.Server.Console.Commands
             // no saving default grid
             if (!mapManager.TryGetGrid(gridId, out var grid))
             {
-                shell.WriteLine("That grid does not exist.");
+                shell.WriteError("That grid does not exist.");
                 return;
             }
 
@@ -106,21 +111,23 @@ namespace Robust.Server.Console.Commands
         }
     }
 
-    public class LoadBp : IConsoleCommand
+    public sealed class LoadBp : IConsoleCommand
     {
         public string Command => "loadbp";
         public string Description => "Loads a blueprint from disk into the game.";
-        public string Help => "loadbp <MapID> <Path> [storeUids]";
+        public string Help => "loadbp <MapID> <Path> [storeUids] [x y] [rotation]";
 
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
-            if (args.Length < 2)
+            if (args.Length != 2 && args.Length != 3 && args.Length != 5 && args.Length != 6)
             {
+                shell.WriteError("Must have either 2, 3, 5, or 6 arguments.");
                 return;
             }
 
             if (!int.TryParse(args[0], out var intMapId))
             {
+                shell.WriteError($"{args[0]} is not a valid integer.");
                 return;
             }
 
@@ -129,21 +136,55 @@ namespace Robust.Server.Console.Commands
             // no loading into null space
             if (mapId == MapId.Nullspace)
             {
-                shell.WriteLine("Cannot load into nullspace.");
+                shell.WriteError("Cannot load into nullspace.");
                 return;
             }
 
             var mapManager = IoCManager.Resolve<IMapManager>();
             if (!mapManager.MapExists(mapId))
             {
-                shell.WriteLine("Target map does not exist.");
+                shell.WriteError("Target map does not exist.");
                 return;
             }
 
             var loadOptions = new MapLoadOptions();
             if (args.Length > 2)
             {
-                loadOptions.StoreMapUids = bool.Parse(args[2]);
+                if (!Boolean.TryParse(args[2], out var storeUids))
+                {
+                    shell.WriteError($"{args[2]} is not a valid boolean..");
+                    return;
+                }
+
+                loadOptions.StoreMapUids = storeUids;
+            }
+
+            if (args.Length >= 5)
+            {
+                if (!int.TryParse(args[3], out var x))
+                {
+                    shell.WriteError($"{args[3]} is not a valid integer.");
+                    return;
+                }
+
+                if (!int.TryParse(args[4], out var y))
+                {
+                    shell.WriteError($"{args[4]} is not a valid integer.");
+                    return;
+                }
+
+                loadOptions.Offset = new Vector2(x, y);
+            }
+
+            if (args.Length == 6)
+            {
+                if (!float.TryParse(args[5], out var rotation))
+                {
+                    shell.WriteError($"{args[5]} is not a valid integer.");
+                    return;
+                }
+
+                loadOptions.Rotation = new Angle(rotation);
             }
 
             var mapLoader = IoCManager.Resolve<IMapLoader>();
@@ -151,7 +192,7 @@ namespace Robust.Server.Console.Commands
         }
     }
 
-    public class SaveMap : IConsoleCommand
+    public sealed class SaveMap : IConsoleCommand
     {
         public string Command => "savemap";
         public string Description => "Serializes a map to disk.";
@@ -165,59 +206,98 @@ namespace Robust.Server.Console.Commands
             if (!int.TryParse(args[0], out var intMapId))
                 return;
 
-            var mapID = new MapId(intMapId);
+            var mapId = new MapId(intMapId);
 
             // no saving null space
-            if (mapID == MapId.Nullspace)
+            if (mapId == MapId.Nullspace)
                 return;
 
             var mapManager = IoCManager.Resolve<IMapManager>();
-            if (!mapManager.MapExists(mapID))
+            if (!mapManager.MapExists(mapId))
+            {
+                shell.WriteError("Target map does not exist.");
                 return;
+            }
 
-            // TODO: Parse path
-            IoCManager.Resolve<IMapLoader>().SaveMap(mapID, "Maps/Demo/DemoMap.yaml");
+            IoCManager.Resolve<IMapLoader>().SaveMap(mapId, args[1]);
+            shell.WriteLine($"Map {mapId} has been saved to {args[1]}.");
         }
     }
 
-    public class LoadMap : IConsoleCommand
+    public sealed class LoadMap : IConsoleCommand
     {
         public string Command => "loadmap";
         public string Description => "Loads a map from disk into the game.";
-        public string Help => "loadmap <MapID> <Path>";
+        public string Help => "loadmap <MapID> <Path> [x y] [rotation]";
 
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
-            if (args.Length < 1)
-                return;
+            if (args.Length != 2 && args.Length != 4 && args.Length != 5)
+            {
+                shell.WriteError($"Must have either 2, 4, or 5 arguments.");
+            }
 
             if (!int.TryParse(args[0], out var intMapId))
+            {
+                shell.WriteError($"{args[0]} is not a valid integer.");
                 return;
+            }
 
-            var mapID = new MapId(intMapId);
+            var mapId = new MapId(intMapId);
 
             // no loading null space
-            if (mapID == MapId.Nullspace)
+            if (mapId == MapId.Nullspace)
             {
-                shell.WriteLine("You cannot load into map 0.");
+                shell.WriteError("You cannot load into map 0.");
                 return;
             }
 
             var mapManager = IoCManager.Resolve<IMapManager>();
-            if (mapManager.MapExists(mapID))
+            if (mapManager.MapExists(mapId))
             {
-                shell.WriteLine($"Map {mapID} already exists.");
+                shell.WriteError($"Map {mapId} already exists.");
                 return;
             }
 
-            // TODO: Parse path
-            var mapPath = "Maps/Demo/DemoMap.yaml";
-            IoCManager.Resolve<IMapLoader>().LoadMap(mapID, mapPath);
-            shell.WriteLine($"Map {mapID} has been loaded from {mapPath}.");
+            var loadOptions = new MapLoadOptions();
+
+            if (args.Length >= 3)
+            {
+                if (!int.TryParse(args[2], out var x))
+                {
+                    shell.WriteError($"{args[2]} is not a valid integer.");
+                    return;
+                }
+
+                if (!int.TryParse(args[3], out var y))
+                {
+                    shell.WriteError($"{args[3]} is not a valid integer.");
+                    return;
+                }
+                loadOptions.Offset = new Vector2(x, y);
+            }
+
+            if (args.Length == 4)
+            {
+                if (!float.TryParse(args[4], out var rotation))
+                {
+                    shell.WriteError($"{args[4]} is not a valid integer.");
+                    return;
+                }
+
+                loadOptions.Rotation = new Angle(rotation);
+            }
+
+            IoCManager.Resolve<IMapLoader>().LoadMap(mapId, args[1], loadOptions);
+
+            if (mapManager.MapExists(mapId))
+                shell.WriteLine($"Map {mapId} has been loaded from {args[1]}.");
+            else
+                shell.WriteError($"Error while loading map from {args[1]}.");
         }
     }
 
-    class LocationCommand : IConsoleCommand
+    sealed class LocationCommand : IConsoleCommand
     {
         public string Command => "loc";
         public string Description => "Prints the absolute location of the player's entity to console.";
@@ -226,17 +306,19 @@ namespace Robust.Server.Console.Commands
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
             var player = shell.Player as IPlayerSession;
-            if (player?.AttachedEntity == null)
+            var pt = player?.AttachedEntityTransform;
+            if (pt == null)
                 return;
 
-            var pos = player.AttachedEntity.Transform.Coordinates;
             var entityManager = IoCManager.Resolve<IEntityManager>();
+            var pos = pt.Coordinates;
 
-            shell.WriteLine($"MapID:{pos.GetMapId(entityManager)} GridID:{pos.GetGridId(entityManager)} X:{pos.X:N2} Y:{pos.Y:N2}");
+            shell.WriteLine(
+                $"MapID:{pos.GetMapId(entityManager)} GridID:{pos.GetGridId(entityManager)} X:{pos.X:N2} Y:{pos.Y:N2}");
         }
     }
 
-    class TpGridCommand : IConsoleCommand
+    sealed class TpGridCommand : IConsoleCommand
     {
         public string Command => "tpgrid";
         public string Description => "Teleports a grid to a new location.";
@@ -246,12 +328,12 @@ namespace Robust.Server.Console.Commands
         {
             if (args.Length < 3 || args.Length > 4)
             {
-                shell.WriteLine("Wrong number of args.");
+                shell.WriteError("Wrong number of args.");
             }
 
             var gridId = new GridId(int.Parse(args[0]));
-            var xpos = float.Parse(args[1]);
-            var ypos = float.Parse(args[2]);
+            var xpos = float.Parse(args[1], CultureInfo.InvariantCulture);
+            var ypos = float.Parse(args[2], CultureInfo.InvariantCulture);
 
             var mapManager = IoCManager.Resolve<IMapManager>();
 
@@ -267,16 +349,17 @@ namespace Robust.Server.Console.Commands
         }
     }
 
-    class RemoveGridCommand : IConsoleCommand
+    sealed class RemoveGridCommand : IConsoleCommand
     {
         public string Command => "rmgrid";
         public string Description => "Removes a grid from a map. You cannot remove the default grid.";
         public string Help => "rmgrid <gridId>";
+
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
             if (args.Length != 1)
             {
-                shell.WriteLine("Wrong number of args.");
+                shell.WriteError("Wrong number of args.");
                 return;
             }
 
@@ -285,7 +368,7 @@ namespace Robust.Server.Console.Commands
 
             if (!mapManager.GridExists(gridId))
             {
-                shell.WriteLine($"Grid {gridId.Value} does not exist.");
+                shell.WriteError($"Grid {gridId.Value} does not exist.");
                 return;
             }
 
@@ -304,29 +387,28 @@ namespace Robust.Server.Console.Commands
         {
             if (args.Length != 1)
             {
-                shell.WriteLine("Wrong number of args.");
+                shell.WriteError("Wrong number of args.");
                 return;
             }
 
             var mapManager = IoCManager.Resolve<IMapManager>();
-            var pauseManager = IoCManager.Resolve<IPauseManager>();
 
             var arg = args[0];
             var mapId = new MapId(int.Parse(arg, CultureInfo.InvariantCulture));
 
             if (!mapManager.MapExists(mapId))
             {
-                shell.WriteLine("Map does not exist!");
+                shell.WriteError("Map does not exist!");
                 return;
             }
 
-            if (pauseManager.IsMapInitialized(mapId))
+            if (mapManager.IsMapInitialized(mapId))
             {
-                shell.WriteLine("Map is already initialized!");
+                shell.WriteError("Map is already initialized!");
                 return;
             }
 
-            pauseManager.DoMapInitialize(mapId);
+            mapManager.DoMapInitialize(mapId);
         }
     }
 
@@ -339,17 +421,16 @@ namespace Robust.Server.Console.Commands
         public void Execute(IConsoleShell shell, string argStr, string[] args)
         {
             var mapManager = IoCManager.Resolve<IMapManager>();
-            var pauseManager = IoCManager.Resolve<IPauseManager>();
 
             var msg = new StringBuilder();
 
             foreach (var mapId in mapManager.GetAllMapIds().OrderBy(id => id.Value))
             {
                 msg.AppendFormat("{0}: init: {1}, paused: {2}, ent: {3}, grids: {4}\n",
-                    mapId, pauseManager.IsMapInitialized(mapId),
-                    pauseManager.IsMapPaused(mapId),
-                    string.Join(",", mapManager.GetAllMapGrids(mapId).Select(grid => grid.Index)),
-                    mapManager.GetMapEntityId(mapId));
+                    mapId, mapManager.IsMapInitialized(mapId),
+                    mapManager.IsMapPaused(mapId),
+                    mapManager.GetMapEntityId(mapId),
+                    string.Join(",", mapManager.GetAllMapGrids(mapId).Select(grid => grid.Index)));
             }
 
             shell.WriteLine(msg.ToString());
@@ -371,7 +452,7 @@ namespace Robust.Server.Console.Commands
             foreach (var grid in mapManager.GetAllGrids().OrderBy(grid => grid.Index.Value))
             {
                 msg.AppendFormat("{0}: map: {1}, ent: {2}, pos: {3} \n",
-                    grid.Index, grid.ParentMapId, grid.WorldPosition, grid.GridEntityId);
+                    grid.Index, grid.ParentMapId, grid.GridEntityId, grid.WorldPosition);
             }
 
             shell.WriteLine(msg.ToString());

@@ -22,6 +22,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
@@ -36,12 +37,11 @@ namespace Robust.Shared.Physics.Dynamics
 {
     public abstract class SharedPhysicsMapComponent : Component
     {
+        [Dependency] private readonly IEntityManager _entityManager = default!;
         [Dependency] private readonly IIslandManager _islandManager = default!;
 
+        internal SharedPhysicsSystem _physics = default!;
         internal SharedBroadphaseSystem BroadphaseSystem = default!;
-        internal SharedPhysicsSystem PhysicsSystem = default!;
-
-        public override string Name => "PhysicsMap";
 
         internal ContactManager ContactManager = default!;
 
@@ -72,7 +72,7 @@ namespace Robust.Shared.Physics.Dynamics
 
         // TODO: Given physics bodies are a common thing to be listening for on moveevents it's probably beneficial to have 2 versions; one that includes the entity
         // and one that includes the body
-        private List<(ITransformComponent Transform, PhysicsComponent Body)> _deferredUpdates = new();
+        private HashSet<TransformComponent> _deferredUpdates = new();
 
         /// <summary>
         ///     All bodies present on this map.
@@ -99,11 +99,6 @@ namespace Robust.Shared.Physics.Dynamics
         /// </summary>
         private HashSet<PhysicsComponent> _islandSet = new();
 
-        private HashSet<PhysicsComponent> _queuedWake = new();
-        private HashSet<PhysicsComponent> _queuedSleep = new();
-
-        private Queue<CollisionChangeMessage> _queuedCollisionMessages = new();
-
         private List<PhysicsComponent> _islandBodies = new(64);
         private List<Contact> _islandContacts = new(32);
         private List<Joint> _islandJoints = new(8);
@@ -119,12 +114,32 @@ namespace Robust.Shared.Physics.Dynamics
         /// </summary>
         private float _invDt0;
 
-        public MapId MapId => Owner.Transform.MapID;
+        public MapId MapId => _entityManager.GetComponent<TransformComponent>(Owner).MapID;
 
         #region AddRemove
+
+        public void AddBody(PhysicsComponent body)
+        {
+            if (!Bodies.Add(body)) return;
+            body.PhysicsMap = this;
+        }
+
         public void AddAwakeBody(PhysicsComponent body)
         {
-            _queuedWake.Add(body);
+            if (body.BodyType == BodyType.Static)
+            {
+                Logger.ErrorS("physics", $"Tried to add static body {_entityManager.ToPrettyString(body.Owner)} as an awake body to map!");
+                return;
+            }
+
+            DebugTools.Assert(Bodies.Contains(body));
+            if (!Bodies.Contains(body))
+            {
+                Logger.ErrorS("physics", $"Tried to add {_entityManager.ToPrettyString(body.Owner)} as an awake body to map when it's not contained on the map!");
+                return;
+            }
+
+            AwakeBodies.Add(body);
         }
 
         public void RemoveBody(PhysicsComponent body)
@@ -132,80 +147,14 @@ namespace Robust.Shared.Physics.Dynamics
             Bodies.Remove(body);
             AwakeBodies.Remove(body);
             body.DestroyContacts();
+            body.PhysicsMap = null;
         }
 
         public void RemoveSleepBody(PhysicsComponent body)
         {
-            _queuedSleep.Add(body);
-        }
-        #endregion
-
-        #region Queue
-        private void ProcessChanges()
-        {
-            ProcessBodyChanges();
-            ProcessWakeQueue();
-            ProcessSleepQueue();
+            AwakeBodies.Remove(body);
         }
 
-        private void ProcessBodyChanges()
-        {
-            while (_queuedCollisionMessages.Count > 0)
-            {
-                var message = _queuedCollisionMessages.Dequeue();
-
-                if (!message.Body.Deleted && message.Body.CanCollide)
-                {
-                    AddBody(message.Body);
-                }
-                else
-                {
-                    RemoveBody(message.Body);
-                }
-            }
-        }
-
-        public void AddBody(PhysicsComponent body)
-        {
-            if (Bodies.Contains(body)) return;
-
-            // TODO: Kinda dodgy with this and wake shit.
-            // Look at my note under ProcessWakeQueue
-            if (body.Awake && body.BodyType != BodyType.Static)
-            {
-                _queuedWake.Remove(body);
-                AwakeBodies.Add(body);
-            }
-
-            Bodies.Add(body);
-            body.PhysicsMap = this;
-        }
-
-        private void ProcessWakeQueue()
-        {
-            foreach (var body in _queuedWake)
-            {
-                // Sloth note: So FPE doesn't seem to handle static bodies being woken gracefully as they never sleep
-                // (No static body's an island so can't increase their min sleep time).
-                // AFAIK not adding it to woken bodies shouldn't matter for anything tm...
-                if (!body.Awake || body.BodyType == BodyType.Static || !Bodies.Contains(body)) continue;
-                AwakeBodies.Add(body);
-            }
-
-            _queuedWake.Clear();
-        }
-
-        private void ProcessSleepQueue()
-        {
-            foreach (var body in _queuedSleep)
-            {
-                if (body.Awake) continue;
-
-                AwakeBodies.Remove(body);
-            }
-
-            _queuedSleep.Clear();
-        }
         #endregion
 
         /// <summary>
@@ -215,40 +164,29 @@ namespace Robust.Shared.Physics.Dynamics
         /// <param name="prediction"></param>
         public void Step(float frameTime, bool prediction)
         {
-            // The original doesn't call ProcessChanges quite so much but stuff like collision behaviors
-            // can edit things during the solver so we'll just handle it as it comes up.
-            ProcessChanges();
-
             // Box2D does this at the end of a step and also here when there's a fixture update.
             // Given external stuff can move bodies we'll just do this here.
             // Unfortunately this NEEDS to be predicted to make pushing remotely fucking good.
-            BroadphaseSystem.FindNewContacts(MapId, prediction);
+            BroadphaseSystem.FindNewContacts(MapId);
 
             var invDt = frameTime > 0.0f ? 1.0f / frameTime : 0.0f;
             var dtRatio = _invDt0 * frameTime;
 
-            foreach (var controller in PhysicsSystem.Controllers)
-            {
-                controller.UpdateBeforeMapSolve(prediction, this, frameTime);
-            }
+            var updateBeforeSolve = new PhysicsUpdateBeforeMapSolveEvent(prediction, this, frameTime);
+            _entityManager.EventBus.RaiseEvent(EventSource.Local, ref updateBeforeSolve);
 
             ContactManager.Collide();
             // Don't run collision behaviors during FrameUpdate?
             if (!prediction)
                 ContactManager.PreSolve(frameTime);
 
-            // Remove all deleted entities etc.
-            ProcessChanges();
-
             // Integrate velocities, solve velocity constraints, and do integration.
             Solve(frameTime, dtRatio, invDt, prediction);
 
             // TODO: SolveTOI
 
-            foreach (var controller in PhysicsSystem.Controllers)
-            {
-                controller.UpdateAfterMapSolve(prediction, this, frameTime);
-            }
+            var updateAfterSolve = new PhysicsUpdateAfterMapSolveEvent(prediction, this, frameTime);
+            _entityManager.EventBus.RaiseEvent(EventSource.Local, ref updateAfterSolve);
 
             // Box2d recommends clearing (if you are) during fixed updates rather than variable if you are using it
             if (!prediction && AutoClearForces)
@@ -263,9 +201,9 @@ namespace Robust.Shared.Physics.Dynamics
         public void ProcessQueue()
         {
             // We'll store the WorldAABB on the MoveEvent given a lot of stuff ends up re-calculating it.
-            foreach (var (transform, physics) in _deferredUpdates)
+            foreach (var xform in _deferredUpdates)
             {
-                transform.RunDeferred(physics.GetWorldAABB());
+                xform.RunDeferred();
             }
 
             _deferredUpdates.Clear();
@@ -277,9 +215,13 @@ namespace Robust.Shared.Physics.Dynamics
 
             DebugTools.Assert(_islandSet.Count == 0);
 
-            for (Contact? c = ContactManager.ContactList.Next; c != ContactManager.ContactList; c = c.Next)
+            var contactNode = ContactManager._activeContacts.First;
+
+            while (contactNode != null)
             {
-                c!.IslandFlag = false;
+                var contact = contactNode.Value;
+                contactNode = contactNode.Next;
+                contact.IslandFlag = false;
             }
 
             // Build and simulated islands from awake bodies.
@@ -292,14 +234,26 @@ namespace Robust.Shared.Physics.Dynamics
 
             _awakeBodyList.AddRange(AwakeBodies);
 
+            var metaQuery = _entityManager.GetEntityQuery<MetaDataComponent>();
+            var jointQuery = _entityManager.GetEntityQuery<JointComponent>();
 
             // Build the relevant islands / graphs for all bodies.
             foreach (var seed in _awakeBodyList)
             {
+                // TODO: When this gets ECSd add a helper and remove
+
+                if (seed.Deleted)
+                {
+                    // This should never happen. Yet it does.
+                    Logger.Error($"Deleted physics component in awake bodies set. Owner Uid: {seed.Owner}. Physics map: {_entityManager.ToPrettyString(Owner)}");
+                    RemoveBody(seed);
+                    continue;
+                }
+
                 // I tried not running prediction for non-contacted entities but unfortunately it looked like shit
                 // when contact broke so if you want to try that then GOOD LUCK.
                 if (seed.Island ||
-                    seed.Paused && !seed.IgnorePaused)
+                    metaQuery.GetComponent(seed.Owner).EntityPaused && !seed.IgnorePaused)
                 {
                     continue;
                 }
@@ -333,9 +287,12 @@ namespace Robust.Shared.Physics.Dynamics
                     // As static bodies can never be awake (unlike Farseer) we'll set this after the check.
                     body.ForceAwake();
 
-                    for (var contactEdge = body.ContactEdges; contactEdge != null; contactEdge = contactEdge.Next)
+                    var node = body.Contacts.First;
+
+                    while (node != null)
                     {
-                        var contact = contactEdge.Contact!;
+                        var contact = node.Value;
+                        node = node.Next;
 
                         // Has this contact already been added to an island?
                         if (contact.IslandFlag) continue;
@@ -348,8 +305,10 @@ namespace Robust.Shared.Physics.Dynamics
 
                         _islandContacts.Add(contact);
                         contact.IslandFlag = true;
+                        var bodyA = contact.FixtureA!.Body;
+                        var bodyB = contact.FixtureB!.Body;
 
-                        var other = contactEdge.Other!;
+                        var other = bodyA == body ? bodyB : bodyA;
 
                         // Was the other body already added to this island?
                         if (other.Island) continue;
@@ -360,7 +319,7 @@ namespace Robust.Shared.Physics.Dynamics
                         other.Island = true;
                     }
 
-                    if (!body.Owner.TryGetComponent(out JointComponent? jointComponent)) continue;
+                    if (!jointQuery.TryGetComponent(body.Owner, out var jointComponent)) continue;
 
                     foreach (var (_, joint) in jointComponent.Joints)
                     {
@@ -468,6 +427,36 @@ namespace Robust.Shared.Physics.Dynamics
                 body.Force = Vector2.Zero;
                 body.Torque = 0.0f;
             }
+        }
+    }
+
+    [ByRefEvent]
+    public readonly struct PhysicsUpdateBeforeMapSolveEvent
+    {
+        public readonly bool Prediction;
+        public readonly SharedPhysicsMapComponent MapComponent;
+        public readonly float DeltaTime;
+
+        public PhysicsUpdateBeforeMapSolveEvent(bool prediction, SharedPhysicsMapComponent mapComponent, float deltaTime)
+        {
+            Prediction = prediction;
+            MapComponent = mapComponent;
+            DeltaTime = deltaTime;
+        }
+    }
+
+    [ByRefEvent]
+    public readonly struct PhysicsUpdateAfterMapSolveEvent
+    {
+        public readonly bool Prediction;
+        public readonly SharedPhysicsMapComponent MapComponent;
+        public readonly float DeltaTime;
+
+        public PhysicsUpdateAfterMapSolveEvent(bool prediction, SharedPhysicsMapComponent mapComponent, float deltaTime)
+        {
+            Prediction = prediction;
+            MapComponent = mapComponent;
+            DeltaTime = deltaTime;
         }
     }
 }

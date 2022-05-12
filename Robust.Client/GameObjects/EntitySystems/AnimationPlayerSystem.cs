@@ -46,7 +46,7 @@ namespace Robust.Client.GameObjects
             foreach (var key in remie)
             {
                 component.PlayingAnimations.Remove(key);
-                EntityManager.EventBus.RaiseLocalEvent(component.Owner.Uid, new AnimationCompletedEvent {Uid = component.Owner.Uid, Key = key});
+                EntityManager.EventBus.RaiseLocalEvent(component.Owner, new AnimationCompletedEvent {Uid = component.Owner, Key = key});
                 component.AnimationComplete(key);
             }
 
@@ -58,7 +58,13 @@ namespace Robust.Client.GameObjects
         /// </summary>
         public void Play(EntityUid uid, Animation animation, string key)
         {
-            var component = EntityManager.EnsureComponent<AnimationPlayerComponent>(EntityManager.GetEntity(uid));
+            var component = EntityManager.EnsureComponent<AnimationPlayerComponent>(uid);
+            Play(component, animation, key);
+        }
+
+        public void Play(EntityUid uid, AnimationPlayerComponent? component, Animation animation, string key)
+        {
+            component ??= EntityManager.EnsureComponent<AnimationPlayerComponent>(uid);
             Play(component, animation, key);
         }
 
@@ -79,6 +85,14 @@ namespace Robust.Client.GameObjects
                    component.PlayingAnimations.ContainsKey(key);
         }
 
+        public bool HasRunningAnimation(EntityUid uid, AnimationPlayerComponent? component, string key)
+        {
+            if (component == null)
+                TryComp(uid, out component);
+
+            return component != null && component.PlayingAnimations.ContainsKey(key);
+        }
+
         public bool HasRunningAnimation(AnimationPlayerComponent component, string key)
         {
             return component.PlayingAnimations.ContainsKey(key);
@@ -86,6 +100,18 @@ namespace Robust.Client.GameObjects
 
         public void Stop(AnimationPlayerComponent component, string key)
         {
+            component.PlayingAnimations.Remove(key);
+        }
+
+        public void Stop(EntityUid uid, string key)
+        {
+            if (!TryComp<AnimationPlayerComponent>(uid, out var player)) return;
+            player.PlayingAnimations.Remove(key);
+        }
+
+        public void Stop(EntityUid uid, AnimationPlayerComponent? component, string key)
+        {
+            if (!Resolve(uid, ref component, false)) return;
             component.PlayingAnimations.Remove(key);
         }
     }

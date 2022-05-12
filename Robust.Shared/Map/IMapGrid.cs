@@ -10,7 +10,7 @@ namespace Robust.Shared.Map
     ///     This is a collection of tiles in a grid format.
     /// </summary>
     [PublicAPI]
-    public interface IMapGrid : IDisposable
+    public interface IMapGrid
     {
         /// <summary>
         ///     The integer ID of the map this grid is currently located within.
@@ -88,7 +88,12 @@ namespace Robust.Shared.Map
         ///     Returns all tiles in the grid, in row-major order [xTileIndex, yTileIndex].
         /// </summary>
         /// <returns>All tiles in the chunk.</returns>
-        IEnumerable<TileRef> GetAllTiles(bool ignoreSpace = true);
+        IEnumerable<TileRef> GetAllTiles(bool ignoreEmpty = true);
+
+        /// <summary>
+        ///     Returns an enumerator that gets all tiles in the grid without empty ones, in row-major order [xTileIndex, yTileIndex].
+        /// </summary>
+        GridTileEnumerator GetAllTilesEnumerator(bool ignoreEmpty = true);
 
         /// <summary>
         ///     Replaces a single tile inside of the grid.
@@ -127,15 +132,22 @@ namespace Robust.Shared.Map
 
         #region SnapGridAccess
 
+        int AnchoredEntityCount(Vector2i pos);
+        IEnumerable<EntityUid> GetLocalAnchoredEntities(Box2 localAABB);
         IEnumerable<EntityUid> GetAnchoredEntities(MapCoordinates coords);
         IEnumerable<EntityUid> GetAnchoredEntities(EntityCoordinates coords);
         IEnumerable<EntityUid> GetAnchoredEntities(Vector2i pos);
         IEnumerable<EntityUid> GetAnchoredEntities(Box2 worldAABB);
+        IEnumerable<EntityUid> GetAnchoredEntities(Box2Rotated worldBounds);
+
+        // Struct enumerators
+        AnchoredEntitiesEnumerator GetAnchoredEntitiesEnumerator(Vector2i pos);
 
         Vector2i TileIndicesFor(EntityCoordinates coords) => CoordinatesToTile(coords);
         Vector2i TileIndicesFor(MapCoordinates worldPos) => CoordinatesToTile(MapToGrid(worldPos));
         Vector2i TileIndicesFor(Vector2 worldPos) => WorldToTile(worldPos);
 
+        bool IsAnchored(EntityCoordinates coords, EntityUid euid);
         bool AddToSnapGridCell(Vector2i pos, EntityUid euid);
         bool AddToSnapGridCell(EntityCoordinates coords, EntityUid euid);
         void RemoveFromSnapGridCell(Vector2i pos, EntityUid euid);
@@ -238,6 +250,8 @@ namespace Robust.Shared.Map
         /// Transforms EntityCoordinates to chunk indices relative to grid origin.
         /// </summary>
         Vector2i LocalToChunkIndices(EntityCoordinates gridPos);
+
+        Vector2 LocalToGrid(EntityCoordinates position);
 
         #endregion Transforms
 

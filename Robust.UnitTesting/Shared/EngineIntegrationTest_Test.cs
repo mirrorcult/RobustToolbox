@@ -1,14 +1,15 @@
+using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using Robust.Server.Player;
 using Robust.Shared.Enums;
 using Robust.Shared.IoC;
 using Robust.Shared.Network;
-using IPlayerManager = Robust.Server.Player.IPlayerManager;
 
 namespace Robust.UnitTesting.Shared
 {
     [TestFixture]
-    public class EngineIntegrationTest_Test : RobustIntegrationTest
+    public sealed class EngineIntegrationTest_Test : RobustIntegrationTest
     {
         [Test]
         public void ServerStartsCorrectlyTest()
@@ -56,7 +57,7 @@ namespace Robust.UnitTesting.Shared
                 Assert.That(playerManager.PlayerCount, Is.EqualTo(1));
 
                 // Get the only player...
-                var player = playerManager.GetAllPlayers()[0];
+                var player = playerManager.Sessions.Single();
 
                 Assert.That(player.Status, Is.EqualTo(SessionStatus.Connected));
                 Assert.That(player.ConnectedClient.IsConnected, Is.True);

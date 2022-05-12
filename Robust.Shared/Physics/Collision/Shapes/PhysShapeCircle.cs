@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Robust.Shared.Maths;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager.Attributes;
@@ -13,11 +13,14 @@ namespace Robust.Shared.Physics.Collision.Shapes
     /// </summary>
     [Serializable, NetSerializable]
     [DataDefinition]
-    public class PhysShapeCircle : IPhysShape
+    public sealed class PhysShapeCircle : IPhysShape
     {
         public int ChildCount => 1;
 
         public ShapeType ShapeType => ShapeType.Circle;
+
+        /// <inheritdoc />
+        public Box2 LocalBounds => CalcLocalBounds();
 
         private const float DefaultRadius = 0.5f;
 
@@ -72,8 +75,15 @@ namespace Robust.Shared.Physics.Collision.Shapes
             return new Box2(p.X - _radius, p.Y - _radius, p.X + _radius, p.Y + _radius);
         }
 
-        /// <inheritdoc />
-        public void ApplyState() { }
+        private Box2 CalcLocalBounds()
+        {
+            // circle inscribed in box
+            return new Box2(
+                _position.X - _radius,
+                _position.Y - _radius,
+                _position.X + _radius,
+                _position.Y + _radius);
+        }
 
         public bool Equals(IPhysShape? other)
         {
