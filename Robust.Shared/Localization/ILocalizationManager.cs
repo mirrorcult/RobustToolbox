@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using JetBrains.Annotations;
-using Robust.Shared.ContentPack;
+using Robust.Shared.GameObjects;
 using Robust.Shared.Serialization;
 
 namespace Robust.Shared.Localization
@@ -78,6 +78,11 @@ namespace Robust.Shared.Localization
         /// <param name="name">The name of the function.</param>
         /// <param name="function">The function itself.</param>
         void AddFunction(CultureInfo culture, string name, LocFunction function);
+
+        /// <summary>
+        ///     Tries to get the specified localization attribute for the given entity.
+        /// </summary>
+        bool TryGetEntityLocAttrib(EntityUid entity, string attribute, [NotNullWhen(true)] out string? value);
 
         /// <summary>
         ///     Gets localization data for an entity prototype.
