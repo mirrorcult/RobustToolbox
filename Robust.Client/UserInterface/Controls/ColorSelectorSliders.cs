@@ -245,9 +245,9 @@ public sealed class ColorSelectorSliders : Control
                 _middleColorSlider.Value = Color.G;
                 _bottomColorSlider.Value = Color.B;
 
-                _topInputBox.Value = (int)(Color.R * 255.0f);
-                _middleInputBox.Value = (int)(Color.G * 255.0f);
-                _bottomInputBox.Value = (int)(Color.B * 255.0f);
+                _topInputBox.OverrideValue((int)(Color.R * 255.0f));
+                _middleInputBox.OverrideValue((int)(Color.G * 255.0f));
+                _bottomInputBox.OverrideValue((int)(Color.B * 255.0f));
 
                 break;
             case ColorSelectorType.Hsv:
@@ -259,25 +259,24 @@ public sealed class ColorSelectorSliders : Control
                 if (color.X > 0)
                 {
                     _topColorSlider.Value = color.X;
-                    _topInputBox.Value = (int)(color.X * 360.0f);
+                    _topInputBox.OverrideValue((int)(color.X * 360.0f));
                 }
                 else
                 {
-                    _topInputBox.Value = (int)(_topColorSlider.Value * 360.0f);
+                    _topInputBox.OverrideValue((int)(_topColorSlider.Value * 360.0f));
                 }
 
                 _middleColorSlider.Value = color.Y;
                 _bottomColorSlider.Value = color.Z;
 
-                _middleInputBox.Value = (int)(color.Y * 100.0f);
-                _bottomInputBox.Value = (int)(color.Z * 100.0f);
-
+                _middleInputBox.OverrideValue((int)(color.Y * 100.0f));
+                _bottomInputBox.OverrideValue((int)(color.Z * 100.0f));
 
                 break;
         }
 
         _alphaSlider.Value = Color.A;
-        _alphaInputBox.Value = (int)(Color.A * 100.0f);
+        _alphaInputBox.OverrideValue((int)(Color.A * 100.0f));
     }
 
     private bool IsSpinBoxValid(int value, ColorSliderOrder ordering)
